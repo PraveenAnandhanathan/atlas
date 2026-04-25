@@ -17,6 +17,8 @@ atlas-fs = { workspace = true }
 atlas-version = { workspace = true }
 atlas-object = { workspace = true }
 atlas-chunk = { workspace = true }
+atlas-indexer = { workspace = true }
+atlas-ingest = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

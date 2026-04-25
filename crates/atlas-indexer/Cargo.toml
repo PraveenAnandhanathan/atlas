@@ -1,0 +1,20 @@
+[package]
+name = "atlas-indexer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS semantic index — Tantivy full-text + flat-vector store + hybrid query."
+
+[dependencies]
+atlas-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tantivy = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

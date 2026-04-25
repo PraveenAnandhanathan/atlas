@@ -22,6 +22,9 @@ members = [
     "crates/atlas-bench",
     "crates/atlas-deploy",
     "crates/atlas-py",
+    # Phase 3 — Semantic
+    "crates/atlas-indexer",
+    "crates/atlas-ingest",
 ]
 
 [workspace.package]
@@ -79,6 +82,12 @@ libc = "0.2"
 # FoundationDB (feature-gated; needs system libfdb_c)
 foundationdb = { version = "0.9", features = ["fdb-7_3"] }
 
+# Phase 3 — Semantic plane
+tantivy = "0.22"
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+
 # Internal crates, referenced by siblings
 atlas-core = { path = "crates/atlas-core", version = "0.1.0" }
 atlas-chunk = { path = "crates/atlas-chunk", version = "0.1.0" }
@@ -92,6 +101,8 @@ atlas-net = { path = "crates/atlas-net", version = "0.1.0" }
 atlas-replicate = { path = "crates/atlas-replicate", version = "0.1.0" }
 atlas-placement = { path = "crates/atlas-placement", version = "0.1.0" }
 atlas-transport = { path = "crates/atlas-transport", version = "0.1.0" }
+atlas-indexer = { path = "crates/atlas-indexer", version = "0.1.0" }
+atlas-ingest = { path = "crates/atlas-ingest", version = "0.1.0" }
 
 [profile.release]
 lto = "thin"

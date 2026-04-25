@@ -1,0 +1,22 @@
+[package]
+name = "atlas-ingest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS ingest pipeline — format extraction, embedding, indexing."
+
+[dependencies]
+atlas-core = { workspace = true }
+atlas-fs = { workspace = true }
+atlas-indexer = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+atlas-fs = { workspace = true }
+tempfile = { workspace = true }

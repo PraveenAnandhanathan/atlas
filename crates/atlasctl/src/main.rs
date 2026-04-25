@@ -7,10 +7,19 @@
 use anyhow::{anyhow, Context, Result};
 use atlas_core::{Author, Hash, ObjectKind};
 use atlas_fs::Fs;
+use atlas_indexer::HybridQuery;
+use atlas_ingest::{policy::AllowAll, Ingester};
 use atlas_version::{Change, Version};
 use clap::{Parser, Subcommand};
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
+
+fn parse_kv(s: &str) -> std::result::Result<(String, String), String> {
+    s.split_once('=')
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .ok_or_else(|| format!("expected key=value, got {s:?}"))
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "atlasctl", version, about = "ATLAS filesystem CLI", long_about = None)]
@@ -110,6 +119,44 @@ enum Cmd {
 
     /// Verify integrity of every chunk in the store.
     Verify,
+
+    /// Ingest files into the semantic index.
+    Ingest {
+        /// ATLAS directory to ingest recursively (default: /).
+        #[arg(default_value = "/")]
+        path: String,
+        /// Index directory (default: <store>/.atlas-index).
+        #[arg(long)]
+        index_dir: Option<PathBuf>,
+        /// URL of the embedder service (optional).
+        #[arg(long, env = "ATLAS_EMBEDDER_URL")]
+        embedder_url: Option<String>,
+    },
+
+    /// Search the semantic index.
+    Find {
+        /// Keyword query (Tantivy syntax). May be combined with --near.
+        #[arg(long, short)]
+        query: Option<String>,
+        /// Path to a file whose embedding is used as the vector query.
+        #[arg(long)]
+        near: Option<String>,
+        /// Xattr filter key=value (repeatable).
+        #[arg(long, value_parser = parse_kv)]
+        filter: Vec<(String, String)>,
+        /// Maximum results to return.
+        #[arg(long, short, default_value_t = 10)]
+        limit: usize,
+        /// Weight given to the vector score (0 = text only, 1 = vector only).
+        #[arg(long, default_value_t = 0.5)]
+        vector_weight: f32,
+        /// Index directory (default: <store>/.atlas-index).
+        #[arg(long)]
+        index_dir: Option<PathBuf>,
+        /// URL of the embedder service (for --near queries).
+        #[arg(long, env = "ATLAS_EMBEDDER_URL")]
+        embedder_url: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -154,6 +201,29 @@ fn main() -> Result<()> {
         Cmd::Log { limit } => cmd_log(&store_path, limit),
         Cmd::Diff { from, to } => cmd_diff(&store_path, from.as_deref(), to.as_deref()),
         Cmd::Verify => cmd_verify(&store_path),
+        Cmd::Ingest {
+            path,
+            index_dir,
+            embedder_url,
+        } => cmd_ingest(&store_path, &path, index_dir, embedder_url.as_deref()),
+        Cmd::Find {
+            query,
+            near,
+            filter,
+            limit,
+            vector_weight,
+            index_dir,
+            embedder_url,
+        } => cmd_find(
+            &store_path,
+            query.as_deref(),
+            near.as_deref(),
+            filter,
+            limit,
+            vector_weight,
+            index_dir,
+            embedder_url.as_deref(),
+        ),
     }
 }
 
@@ -401,10 +471,7 @@ fn resolve_commitish(fs: &Fs, s: &str) -> Result<Hash> {
 
 fn cmd_verify(store: &std::path::Path) -> Result<()> {
     let fs = Fs::open(store)?;
-    // Iterate every chunk and verify it.
     use atlas_chunk::ChunkStore;
-    // Re-open the local store directly to use iter_hashes.
-    // (Fs::chunks() returns &dyn ChunkStore which doesn't expose iter_hashes.)
     let chunks = atlas_chunk::LocalChunkStore::open(store.join("chunks"))?;
     let hashes = chunks.iter_hashes()?;
     let n = hashes.len();
@@ -420,5 +487,85 @@ fn cmd_verify(store: &std::path::Path) -> Result<()> {
         std::process::exit(2);
     }
     let _ = fs;
+    Ok(())
+}
+
+fn default_index_dir(store: &std::path::Path) -> PathBuf {
+    store.join(".atlas-index")
+}
+
+fn cmd_ingest(
+    store: &std::path::Path,
+    path: &str,
+    index_dir: Option<PathBuf>,
+    embedder_url: Option<&str>,
+) -> Result<()> {
+    let fs = Fs::open(store).context("open store")?;
+    let idx = index_dir.unwrap_or_else(|| default_index_dir(store));
+    let mut ingester =
+        Ingester::open(&idx, embedder_url).map_err(|e| anyhow!("open index: {e}"))?;
+    let count = ingester
+        .ingest_tree(&fs, path, &AllowAll)
+        .map_err(|e| anyhow!("ingest: {e}"))?;
+    println!("indexed {count} file(s) under {path}");
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_find(
+    store: &std::path::Path,
+    query: Option<&str>,
+    near: Option<&str>,
+    filter: Vec<(String, String)>,
+    limit: usize,
+    vector_weight: f32,
+    index_dir: Option<PathBuf>,
+    embedder_url: Option<&str>,
+) -> Result<()> {
+    let idx = index_dir.unwrap_or_else(|| default_index_dir(store));
+    let ingester = Ingester::open(&idx, embedder_url).map_err(|e| anyhow!("open index: {e}"))?;
+
+    // Build vector query by embedding the `--near` file if given.
+    let embedding: Option<Vec<f32>> = match near {
+        Some(atlas_path) => {
+            let fs = Fs::open(store).context("open store")?;
+            let bytes = fs.read(atlas_path).context("read near file")?;
+            let text = atlas_ingest::formats::extract_text(atlas_path, &bytes);
+            match &ingester.embedder {
+                Some(client) => match client.embed(&text) {
+                    Ok(r) => Some(r.embedding),
+                    Err(e) => {
+                        eprintln!("warn: embedder unavailable for --near: {e}");
+                        None
+                    }
+                },
+                None => {
+                    eprintln!("warn: --near requires --embedder-url");
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+
+    let xattr_filters: HashMap<String, String> = filter.into_iter().collect();
+    let q = HybridQuery {
+        text: query.map(|s| s.to_string()),
+        embedding,
+        xattr_filters,
+        limit,
+        vector_weight,
+    };
+
+    let results = ingester.search(&q).map_err(|e| anyhow!("search: {e}"))?;
+    if results.is_empty() {
+        println!("(no results)");
+        return Ok(());
+    }
+    println!("{:<8} {:<10} path", "score", "hash");
+    println!("{}", "-".repeat(60));
+    for r in results {
+        println!("{:<8.4} {:<10} {}", r.score, r.file_hash.short(), r.path);
+    }
     Ok(())
 }
