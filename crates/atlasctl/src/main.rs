@@ -137,7 +137,10 @@ fn main() -> Result<()> {
         Cmd::Ls { path } => cmd_ls(&store_path, &path),
         Cmd::Cat { path } => cmd_cat(&store_path, &path),
         Cmd::Put { path, from } => cmd_put(&store_path, &path, from.as_deref()),
-        Cmd::Cp { host_path, atlas_path } => cmd_cp(&store_path, &host_path, &atlas_path),
+        Cmd::Cp {
+            host_path,
+            atlas_path,
+        } => cmd_cp(&store_path, &host_path, &atlas_path),
         Cmd::Mv { from, to } => cmd_mv(&store_path, &from, &to),
         Cmd::Rm { path, recursive } => cmd_rm(&store_path, &path, recursive),
         Cmd::Mkdir { path } => cmd_mkdir(&store_path, &path),
@@ -231,7 +234,13 @@ fn cmd_cp(store: &std::path::Path, host: &std::path::Path, atlas: &str) -> Resul
     let fs = Fs::open(store)?;
     let bytes = std::fs::read(host)?;
     let e = fs.write(atlas, &bytes)?;
-    println!("{} -> {} ({} bytes, {})", host.display(), e.path, e.size, e.hash.short());
+    println!(
+        "{} -> {} ({} bytes, {})",
+        host.display(),
+        e.path,
+        e.size,
+        e.hash.short()
+    );
     Ok(())
 }
 
@@ -284,7 +293,11 @@ fn cmd_branch(store: &std::path::Path, b: BranchCmd) -> Result<()> {
                 _ => None,
             };
             for b in v.branch_list()? {
-                let marker = if Some(&b.name) == head_branch.as_ref() { "* " } else { "  " };
+                let marker = if Some(&b.name) == head_branch.as_ref() {
+                    "* "
+                } else {
+                    "  "
+                };
                 println!("{marker}{} {}", b.name, b.head.short());
             }
         }
@@ -321,7 +334,8 @@ fn cmd_checkout(store: &std::path::Path, target: &str) -> Result<()> {
         v.checkout_branch(target)?;
         println!("HEAD -> {}", target);
     } else {
-        let h = Hash::from_hex(target).map_err(|_| anyhow!("not a branch or commit hash: {target}"))?;
+        let h =
+            Hash::from_hex(target).map_err(|_| anyhow!("not a branch or commit hash: {target}"))?;
         v.checkout_commit(h)?;
         println!("HEAD detached at {}", h.short());
     }
@@ -348,11 +362,11 @@ fn cmd_diff(store: &std::path::Path, from: Option<&str>, to: Option<&str>) -> Re
     let fs = Fs::open(store)?;
     let v = Version::new(&fs);
     let to_hash = match to {
-        Some(s) => Hash::from_hex(s).map_err(|_| anyhow!("bad commit hash: {s}"))?,
+        Some(s) => resolve_commitish(&fs, s)?,
         None => v.head_commit()?,
     };
     let from_hash = match from {
-        Some(s) => Hash::from_hex(s).map_err(|_| anyhow!("bad commit hash: {s}"))?,
+        Some(s) => resolve_commitish(&fs, s)?,
         None => {
             // HEAD~1 — first parent of HEAD.
             let h = v.head_commit()?;
@@ -371,6 +385,18 @@ fn cmd_diff(store: &std::path::Path, from: Option<&str>, to: Option<&str>) -> Re
         }
     }
     Ok(())
+}
+
+/// Resolve a string to a commit hash. Accepts either a 64-hex commit hash
+/// or a branch name.
+fn resolve_commitish(fs: &Fs, s: &str) -> Result<Hash> {
+    if let Ok(h) = Hash::from_hex(s) {
+        return Ok(h);
+    }
+    if let Some(b) = fs.meta().get_branch(s)? {
+        return Ok(b.head);
+    }
+    Err(anyhow!("not a commit hash or branch: {s}"))
 }
 
 fn cmd_verify(store: &std::path::Path) -> Result<()> {

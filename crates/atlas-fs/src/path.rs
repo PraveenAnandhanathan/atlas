@@ -44,7 +44,10 @@ pub fn split_path(path: &str) -> Result<Vec<String>> {
     if n == "/" {
         return Ok(Vec::new());
     }
-    Ok(n.trim_start_matches('/').split('/').map(String::from).collect())
+    Ok(n.trim_start_matches('/')
+        .split('/')
+        .map(String::from)
+        .collect())
 }
 
 /// Split a path into `(parent_dir, basename)`.

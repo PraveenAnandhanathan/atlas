@@ -7,12 +7,11 @@
 //! replaced by `Hash::ZERO`. This lets anyone re-derive and verify the
 //! hash without trusting the sender.
 
-pub mod manifest;
 pub mod codec;
+pub mod manifest;
 
+pub use codec::{decode, encode, encode_with_zero_hash, hash_manifest};
 pub use manifest::{
-    Blob, BlobManifest, Branch, BranchProtection, ChunkRef, Commit, DirEntry,
-    DirectoryManifest, EmbeddingRef, FileManifest, HeadState, RefRecord, Signature,
-    StoreConfig,
+    Blob, BlobManifest, Branch, BranchProtection, ChunkRef, Commit, DirEntry, DirectoryManifest,
+    EmbeddingRef, FileManifest, HeadState, RefRecord, Signature, StoreConfig,
 };
-pub use codec::{hash_manifest, encode, decode, encode_with_zero_hash};

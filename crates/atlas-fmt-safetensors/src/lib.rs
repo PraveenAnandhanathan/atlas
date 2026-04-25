@@ -70,8 +70,8 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, SafetensorsError> {
         return Err(SafetensorsError::HeaderOverflow(header_size));
     }
     let header_bytes = &bytes[8..(8 + header_size as usize)];
-    let raw: RawHeader =
-        serde_json::from_slice(header_bytes).map_err(|e| SafetensorsError::BadJson(e.to_string()))?;
+    let raw: RawHeader = serde_json::from_slice(header_bytes)
+        .map_err(|e| SafetensorsError::BadJson(e.to_string()))?;
 
     let mut tensors = BTreeMap::new();
     let mut metadata = BTreeMap::new();
@@ -150,7 +150,10 @@ mod tests {
 
     #[test]
     fn rejects_truncated_input() {
-        assert!(matches!(parse_header(&[0u8; 4]), Err(SafetensorsError::TooSmall)));
+        assert!(matches!(
+            parse_header(&[0u8; 4]),
+            Err(SafetensorsError::TooSmall)
+        ));
     }
 
     #[test]
@@ -167,7 +170,10 @@ mod tests {
     #[test]
     fn rejects_invalid_json() {
         let bytes = synthesize("{not json}", &[]);
-        assert!(matches!(parse_header(&bytes), Err(SafetensorsError::BadJson(_))));
+        assert!(matches!(
+            parse_header(&bytes),
+            Err(SafetensorsError::BadJson(_))
+        ));
     }
 
     #[test]

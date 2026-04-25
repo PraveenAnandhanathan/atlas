@@ -9,9 +9,7 @@
 
 use atlas_core::{Hash, ObjectKind};
 use atlas_object::codec::{decode, encode, seal, verify};
-use atlas_object::manifest::{
-    BlobManifest, ChunkRef, DirEntry, DirectoryManifest, FileManifest,
-};
+use atlas_object::manifest::{BlobManifest, ChunkRef, DirEntry, DirectoryManifest, FileManifest};
 use proptest::collection::vec;
 use proptest::prelude::*;
 
@@ -20,8 +18,7 @@ fn arb_hash() -> impl Strategy<Value = Hash> {
 }
 
 fn arb_chunkref() -> impl Strategy<Value = ChunkRef> {
-    (arb_hash(), 1u32..=4 * 1024 * 1024)
-        .prop_map(|(hash, length)| ChunkRef { hash, length })
+    (arb_hash(), 1u32..=4 * 1024 * 1024).prop_map(|(hash, length)| ChunkRef { hash, length })
 }
 
 fn arb_blob() -> impl Strategy<Value = BlobManifest> {
@@ -48,12 +45,11 @@ fn arb_kind() -> impl Strategy<Value = ObjectKind> {
 }
 
 fn arb_dir_entry() -> impl Strategy<Value = DirEntry> {
-    ("[a-z][a-z0-9_]{0,7}", arb_hash(), arb_kind())
-        .prop_map(|(name, object_hash, kind)| DirEntry {
-            name,
-            object_hash,
-            kind,
-        })
+    ("[a-z][a-z0-9_]{0,7}", arb_hash(), arb_kind()).prop_map(|(name, object_hash, kind)| DirEntry {
+        name,
+        object_hash,
+        kind,
+    })
 }
 
 fn arb_dir() -> impl Strategy<Value = DirectoryManifest> {

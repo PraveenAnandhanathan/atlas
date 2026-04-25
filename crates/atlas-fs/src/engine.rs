@@ -183,9 +183,9 @@ impl Fs {
             return Err(Error::Invalid(format!("not a file: {path}")));
         }
         let file = self.load_file(&hash)?;
-        let blob: atlas_object::BlobManifest = self
+        let blob = self
             .meta
-            .get(&atlas_meta::keys::object(&file.blob_hash))?
+            .get_blob_manifest(&file.blob_hash)?
             .ok_or_else(|| Error::NotFound(format!("blob manifest {}", file.blob_hash.short())))?;
         let mut out = Vec::with_capacity(blob.total_size as usize);
         for c in &blob.chunks {
@@ -373,15 +373,15 @@ impl Fs {
             chunks,
         };
         let (h, _) = seal(&mut blob)?;
-        self.meta.put(&atlas_meta::keys::object(&h), &blob)?;
+        self.meta.put_blob_manifest(&blob)?;
         Ok(h)
     }
 
     fn file_size(&self, file_hash: &Hash) -> Result<u64> {
         let file = self.load_file(file_hash)?;
-        let blob: atlas_object::BlobManifest = self
+        let blob = self
             .meta
-            .get(&atlas_meta::keys::object(&file.blob_hash))?
+            .get_blob_manifest(&file.blob_hash)?
             .ok_or_else(|| Error::NotFound(format!("blob {}", file.blob_hash.short())))?;
         Ok(blob.total_size)
     }
@@ -632,12 +632,7 @@ mod tests {
         fs.write("/z", b"1").unwrap();
         fs.write("/a", b"2").unwrap();
         fs.write("/m", b"3").unwrap();
-        let listing: Vec<String> = fs
-            .list("/")
-            .unwrap()
-            .into_iter()
-            .map(|e| e.path)
-            .collect();
+        let listing: Vec<String> = fs.list("/").unwrap().into_iter().map(|e| e.path).collect();
         assert_eq!(listing, vec!["/a", "/m", "/z"]);
     }
 

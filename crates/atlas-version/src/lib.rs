@@ -10,18 +10,28 @@
 
 use atlas_core::{time::now_millis, Author, Error, Hash, ObjectKind, Result};
 use atlas_fs::Fs;
-use atlas_meta::MetaStore;
-use atlas_object::{
-    codec::seal, Branch, BranchProtection, Commit, DirectoryManifest, HeadState,
-};
+use atlas_object::{codec::seal, Branch, BranchProtection, Commit, DirectoryManifest, HeadState};
 use std::collections::HashSet;
 
 /// One change between two trees.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
-    Added { path: String, hash: Hash, kind: ObjectKind },
-    Removed { path: String, hash: Hash, kind: ObjectKind },
-    Modified { path: String, from: Hash, to: Hash, kind: ObjectKind },
+    Added {
+        path: String,
+        hash: Hash,
+        kind: ObjectKind,
+    },
+    Removed {
+        path: String,
+        hash: Hash,
+        kind: ObjectKind,
+    },
+    Modified {
+        path: String,
+        from: Hash,
+        to: Hash,
+        kind: ObjectKind,
+    },
 }
 
 /// Versioning operations on top of an [`Fs`].
@@ -154,7 +164,9 @@ impl<'a> Version<'a> {
             .get_commit(&b.head)?
             .ok_or_else(|| Error::NotFound(format!("commit {}", b.head.short())))?;
         self.fs.set_working_root(commit.tree_hash)?;
-        self.fs.meta().put_head(&HeadState::Branch(name.to_string()))?;
+        self.fs
+            .meta()
+            .put_head(&HeadState::Branch(name.to_string()))?;
         Ok(())
     }
 
@@ -166,7 +178,9 @@ impl<'a> Version<'a> {
             .get_commit(&commit)?
             .ok_or_else(|| Error::NotFound(format!("commit {}", commit.short())))?;
         self.fs.set_working_root(c.tree_hash)?;
-        self.fs.meta().put_head(&HeadState::DetachedCommit(commit))?;
+        self.fs
+            .meta()
+            .put_head(&HeadState::DetachedCommit(commit))?;
         Ok(())
     }
 
@@ -222,13 +236,7 @@ impl<'a> Version<'a> {
         self.diff_trees(from_c.tree_hash, to_c.tree_hash)
     }
 
-    fn diff_dirs(
-        &self,
-        prefix: &str,
-        from: Hash,
-        to: Hash,
-        out: &mut Vec<Change>,
-    ) -> Result<()> {
+    fn diff_dirs(&self, prefix: &str, from: Hash, to: Hash, out: &mut Vec<Change>) -> Result<()> {
         if from == to {
             return Ok(());
         }
@@ -301,9 +309,7 @@ impl<'a> Version<'a> {
                     .fs
                     .meta()
                     .get_dir_manifest(&entry.object_hash)?
-                    .ok_or_else(|| {
-                        Error::NotFound(format!("dir {}", entry.object_hash.short()))
-                    })?;
+                    .ok_or_else(|| Error::NotFound(format!("dir {}", entry.object_hash.short())))?;
                 for child in &dir.entries {
                     self.collect_subtree(&path, child, added, out)?;
                 }

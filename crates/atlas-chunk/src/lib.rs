@@ -45,6 +45,13 @@ pub trait ChunkStore: Send + Sync {
 
     /// Size (in bytes) of a stored chunk.
     fn size(&self, hash: &Hash) -> Result<u64>;
+
+    /// Enumerate every chunk currently stored. Used by GC and `verify`.
+    /// Default implementation returns an empty list — networked backends
+    /// that cannot cheaply enumerate may keep that default.
+    fn iter_hashes(&self) -> Result<Vec<Hash>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Local filesystem backend: chunks live under `<root>/<hh>/<hh>/<full_hex>`.
@@ -66,42 +73,7 @@ impl LocalChunkStore {
     /// Path to a chunk on disk.
     fn path_for(&self, hash: &Hash) -> PathBuf {
         let hex = hash.to_hex();
-        self.root
-            .join(&hex[0..2])
-            .join(&hex[2..4])
-            .join(&hex)
-    }
-
-    /// Iterate over every chunk hash currently stored. Useful for GC.
-    pub fn iter_hashes(&self) -> Result<Vec<Hash>> {
-        let mut out = Vec::new();
-        let Ok(outer) = fs::read_dir(&self.root) else {
-            return Ok(out);
-        };
-        for a in outer.flatten() {
-            if !a.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                continue;
-            }
-            let Ok(inner) = fs::read_dir(a.path()) else {
-                continue;
-            };
-            for b in inner.flatten() {
-                if !b.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    continue;
-                }
-                let Ok(files) = fs::read_dir(b.path()) else {
-                    continue;
-                };
-                for f in files.flatten() {
-                    if let Some(name) = f.file_name().to_str() {
-                        if let Ok(h) = Hash::from_hex(name) {
-                            out.push(h);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(out)
+        self.root.join(&hex[0..2]).join(&hex[2..4]).join(&hex)
     }
 }
 
@@ -179,6 +151,37 @@ impl ChunkStore for LocalChunkStore {
             }
             Err(e) => Err(e.into()),
         }
+    }
+
+    fn iter_hashes(&self) -> Result<Vec<Hash>> {
+        let mut out = Vec::new();
+        let Ok(outer) = fs::read_dir(&self.root) else {
+            return Ok(out);
+        };
+        for a in outer.flatten() {
+            if !a.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let Ok(inner) = fs::read_dir(a.path()) else {
+                continue;
+            };
+            for b in inner.flatten() {
+                if !b.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    continue;
+                }
+                let Ok(files) = fs::read_dir(b.path()) else {
+                    continue;
+                };
+                for f in files.flatten() {
+                    if let Some(name) = f.file_name().to_str() {
+                        if let Ok(h) = Hash::from_hex(name) {
+                            out.push(h);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 }
 

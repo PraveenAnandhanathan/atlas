@@ -26,7 +26,9 @@ pub fn mount(_fs: Fs, _mountpoint: impl AsRef<Path>) -> Result<(), MountError> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum MountError {
-    #[error("FUSE mount is not yet implemented (T0.7); enable the `linux-fuse` feature when it lands")]
+    #[error(
+        "FUSE mount is not yet implemented (T0.7); enable the `linux-fuse` feature when it lands"
+    )]
     NotImplemented,
 }
 

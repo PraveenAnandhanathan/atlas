@@ -3,7 +3,8 @@
 
 use atlas_core::{Error, Hash, Result};
 use atlas_object::{
-    Branch, Commit, DirectoryManifest, FileManifest, HeadState, RefRecord, StoreConfig,
+    BlobManifest, Branch, Commit, DirectoryManifest, FileManifest, HeadState, RefRecord,
+    StoreConfig,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -60,7 +61,10 @@ pub trait MetaStore: Send + Sync {
 
     // -- Typed convenience helpers ------------------------------------
 
-    fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
+    fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>>
+    where
+        Self: Sized,
+    {
         match self.get_raw(key)? {
             Some(bytes) => {
                 let v = bincode::deserialize(&bytes).map_err(|e| Error::Serde(e.to_string()))?;
@@ -70,43 +74,62 @@ pub trait MetaStore: Send + Sync {
         }
     }
 
-    fn put<T: Serialize>(&self, key: &str, value: &T) -> Result<()> {
+    fn put<T: Serialize>(&self, key: &str, value: &T) -> Result<()>
+    where
+        Self: Sized,
+    {
         let bytes = bincode::serialize(value).map_err(|e| Error::Serde(e.to_string()))?;
         self.put_raw(key, &bytes)
     }
 
     // -- Domain helpers ----------------------------------------------
+    //
+    // These take concrete types so they remain dyn-callable. Each one
+    // hits get_raw/put_raw and does its own bincode encode/decode.
+
+    fn get_blob_manifest(&self, hash: &Hash) -> Result<Option<BlobManifest>> {
+        decode_opt(self.get_raw(&crate::keys::object(hash))?)
+    }
+
+    fn put_blob_manifest(&self, m: &BlobManifest) -> Result<()> {
+        let bytes = encode(m)?;
+        self.put_raw(&crate::keys::object(&m.hash), &bytes)
+    }
 
     fn get_file_manifest(&self, hash: &Hash) -> Result<Option<FileManifest>> {
-        self.get(&crate::keys::object(hash))
+        decode_opt(self.get_raw(&crate::keys::object(hash))?)
     }
 
     fn put_file_manifest(&self, m: &FileManifest) -> Result<()> {
-        self.put(&crate::keys::object(&m.hash), m)
+        let bytes = encode(m)?;
+        self.put_raw(&crate::keys::object(&m.hash), &bytes)
     }
 
     fn get_dir_manifest(&self, hash: &Hash) -> Result<Option<DirectoryManifest>> {
-        self.get(&crate::keys::object(hash))
+        decode_opt(self.get_raw(&crate::keys::object(hash))?)
     }
 
     fn put_dir_manifest(&self, m: &DirectoryManifest) -> Result<()> {
-        self.put(&crate::keys::object(&m.hash), m)
+        let bytes = encode(m)?;
+        self.put_raw(&crate::keys::object(&m.hash), &bytes)
     }
 
     fn get_commit(&self, hash: &Hash) -> Result<Option<Commit>> {
-        self.get(&crate::keys::commit(hash))
+        decode_opt(self.get_raw(&crate::keys::commit(hash))?)
     }
 
     fn put_commit(&self, c: &Commit) -> Result<()> {
-        self.put(&crate::keys::commit(&c.hash), c)
+        let bytes = encode(c)?;
+        self.put_raw(&crate::keys::commit(&c.hash), &bytes)
     }
 
     fn get_ref(&self, path: &str) -> Result<Option<RefRecord>> {
-        self.get(&crate::keys::refkey(path))
+        decode_opt(self.get_raw(&crate::keys::refkey(path))?)
     }
 
     fn put_ref(&self, r: &RefRecord) -> Result<()> {
-        self.put(&crate::keys::refkey(&r.path), r)
+        let bytes = encode(r)?;
+        self.put_raw(&crate::keys::refkey(&r.path), &bytes)
     }
 
     fn delete_ref(&self, path: &str) -> Result<()> {
@@ -114,11 +137,12 @@ pub trait MetaStore: Send + Sync {
     }
 
     fn get_branch(&self, name: &str) -> Result<Option<Branch>> {
-        self.get(&crate::keys::branch(name))
+        decode_opt(self.get_raw(&crate::keys::branch(name))?)
     }
 
     fn put_branch(&self, b: &Branch) -> Result<()> {
-        self.put(&crate::keys::branch(&b.name), b)
+        let bytes = encode(b)?;
+        self.put_raw(&crate::keys::branch(&b.name), &bytes)
     }
 
     fn list_branches(&self) -> Result<Vec<Branch>> {
@@ -133,18 +157,34 @@ pub trait MetaStore: Send + Sync {
     }
 
     fn get_head(&self) -> Result<Option<HeadState>> {
-        self.get(crate::keys::head())
+        decode_opt(self.get_raw(crate::keys::head())?)
     }
 
     fn put_head(&self, h: &HeadState) -> Result<()> {
-        self.put(crate::keys::head(), h)
+        let bytes = encode(h)?;
+        self.put_raw(crate::keys::head(), &bytes)
     }
 
     fn get_config(&self) -> Result<Option<StoreConfig>> {
-        self.get(crate::keys::config())
+        decode_opt(self.get_raw(crate::keys::config())?)
     }
 
     fn put_config(&self, c: &StoreConfig) -> Result<()> {
-        self.put(crate::keys::config(), c)
+        let bytes = encode(c)?;
+        self.put_raw(crate::keys::config(), &bytes)
+    }
+}
+
+fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
+    bincode::serialize(value).map_err(|e| Error::Serde(e.to_string()))
+}
+
+fn decode_opt<T: DeserializeOwned>(bytes: Option<Vec<u8>>) -> Result<Option<T>> {
+    match bytes {
+        Some(b) => {
+            let v = bincode::deserialize(&b).map_err(|e| Error::Serde(e.to_string()))?;
+            Ok(Some(v))
+        }
+        None => Ok(None),
     }
 }
