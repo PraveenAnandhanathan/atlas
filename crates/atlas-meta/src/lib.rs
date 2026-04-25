@@ -12,4 +12,4 @@ pub mod sled_store;
 pub mod store;
 
 pub use sled_store::SledStore;
-pub use store::{MetaStore, Transaction};
+pub use store::{MetaStore, Transaction, TxOpExternal};

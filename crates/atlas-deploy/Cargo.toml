@@ -1,0 +1,17 @@
+[package]
+name = "atlas-deploy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS deployment helper — generate single-node and 3-node cluster scripts."
+
+[[bin]]
+name = "atlas-deploy"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }

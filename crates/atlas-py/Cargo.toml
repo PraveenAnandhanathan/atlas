@@ -1,0 +1,18 @@
+[package]
+name = "atlas-py"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Python (PyO3) bindings for ATLAS."
+
+[lib]
+name = "atlas_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+atlas-core = { workspace = true }
+atlas-fs = { workspace = true }
+atlas-version = { path = "../atlas-version", version = "0.1.0" }
+pyo3 = { workspace = true }

@@ -21,6 +21,14 @@ pub(crate) enum TxOp {
     Delete { key: String },
 }
 
+/// Public view of [`TxOp`] for wire-layer adapters that need to ship a
+/// transaction over a network.
+#[derive(Debug, Clone)]
+pub enum TxOpExternal {
+    Put { key: String, value: Vec<u8> },
+    Delete { key: String },
+}
+
 impl Transaction {
     pub fn new() -> Self {
         Self { ops: Vec::new() }
@@ -38,6 +46,17 @@ impl Transaction {
         let bytes = bincode::serialize(value).map_err(|e| Error::Serde(e.to_string()))?;
         self.put_raw(key, bytes);
         Ok(())
+    }
+
+    /// Consume the transaction and return its operations in a public form.
+    pub fn into_ops(self) -> Vec<TxOpExternal> {
+        self.ops
+            .into_iter()
+            .map(|op| match op {
+                TxOp::Put { key, value } => TxOpExternal::Put { key, value },
+                TxOp::Delete { key } => TxOpExternal::Delete { key },
+            })
+            .collect()
     }
 }
 

@@ -1,0 +1,21 @@
+[package]
+name = "atlas-replicate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS chunk replication — CRAQ chain primitive."
+
+[dependencies]
+atlas-core = { workspace = true }
+atlas-chunk = { workspace = true }
+atlas-net = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+atlas-storage = { path = "../atlas-storage", version = "0.1.0" }
+tempfile = { workspace = true }
+tokio = { workspace = true }

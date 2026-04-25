@@ -10,6 +10,18 @@ members = [
     "crates/atlas-fuse",
     "crates/atlas-fmt-safetensors",
     "crates/atlasctl",
+    # Phase 2
+    "crates/atlas-proto",
+    "crates/atlas-net",
+    "crates/atlas-storage",
+    "crates/atlas-replicate",
+    "crates/atlas-placement",
+    "crates/atlas-transport",
+    "crates/atlas-meta-fdb",
+    "crates/atlas-gc",
+    "crates/atlas-bench",
+    "crates/atlas-deploy",
+    "crates/atlas-py",
 ]
 
 [workspace.package]
@@ -49,6 +61,23 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Testing
 proptest = "1"
 tempfile = "3"
+criterion = "0.5"
+
+# Phase 2 — async + RPC
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "signal", "time"] }
+async-trait = "0.1"
+bytes = "1"
+futures = "0.3"
+
+# PyO3
+pyo3 = { version = "0.22", features = ["extension-module"] }
+
+# FUSE (Linux only)
+fuser = "0.14"
+libc = "0.2"
+
+# FoundationDB (feature-gated; needs system libfdb_c)
+foundationdb = { version = "0.9", features = ["fdb-7_3"] }
 
 # Internal crates, referenced by siblings
 atlas-core = { path = "crates/atlas-core", version = "0.1.0" }
@@ -58,6 +87,11 @@ atlas-meta = { path = "crates/atlas-meta", version = "0.1.0" }
 atlas-version = { path = "crates/atlas-version", version = "0.1.0" }
 atlas-fs = { path = "crates/atlas-fs", version = "0.1.0" }
 atlas-fmt-safetensors = { path = "crates/atlas-fmt-safetensors", version = "0.1.0" }
+atlas-proto = { path = "crates/atlas-proto", version = "0.1.0" }
+atlas-net = { path = "crates/atlas-net", version = "0.1.0" }
+atlas-replicate = { path = "crates/atlas-replicate", version = "0.1.0" }
+atlas-placement = { path = "crates/atlas-placement", version = "0.1.0" }
+atlas-transport = { path = "crates/atlas-transport", version = "0.1.0" }
 
 [profile.release]
 lto = "thin"

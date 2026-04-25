@@ -1,0 +1,25 @@
+[package]
+name = "atlas-net"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS network client — RemoteChunkStore + RemoteMetaStore over TCP."
+
+[dependencies]
+atlas-core = { workspace = true }
+atlas-object = { workspace = true }
+atlas-chunk = { workspace = true }
+atlas-meta = { workspace = true }
+atlas-proto = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+atlas-storage = { path = "../atlas-storage", version = "0.1.0" }
+tempfile = { workspace = true }
+tokio = { workspace = true }

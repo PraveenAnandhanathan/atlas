@@ -1,0 +1,23 @@
+[package]
+name = "atlas-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS transport abstraction — TCP today, RDMA stub for tomorrow."
+
+[features]
+default = []
+rdma = []
+
+[dependencies]
+atlas-core = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

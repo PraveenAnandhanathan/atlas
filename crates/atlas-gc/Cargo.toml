@@ -1,0 +1,22 @@
+[package]
+name = "atlas-gc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS garbage collector — mark-sweep + refcount journal."
+
+[dependencies]
+atlas-core = { workspace = true }
+atlas-chunk = { workspace = true }
+atlas-meta = { workspace = true }
+atlas-object = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+atlas-fs = { workspace = true }
+atlas-version = { path = "../atlas-version", version = "0.1.0" }
+tempfile = { workspace = true }

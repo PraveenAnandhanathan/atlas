@@ -1,0 +1,20 @@
+[package]
+name = "atlas-proto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS wire protocol — RPC service definitions and frame codec."
+
+[dependencies]
+atlas-core = { workspace = true }
+atlas-object = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

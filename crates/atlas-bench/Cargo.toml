@@ -1,0 +1,25 @@
+[package]
+name = "atlas-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS benchmarks — chunk and FS performance vs the local filesystem."
+
+[dependencies]
+atlas-core = { workspace = true }
+atlas-chunk = { workspace = true }
+atlas-fs = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "chunk_put_get"
+harness = false
+
+[[bench]]
+name = "fs_write_read"
+harness = false
