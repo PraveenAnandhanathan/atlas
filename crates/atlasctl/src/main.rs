@@ -7,8 +7,14 @@
 use anyhow::{anyhow, Context, Result};
 use atlas_core::{Author, Hash, ObjectKind};
 use atlas_fs::Fs;
+use atlas_governor::{
+    policy::{AccessRequest, Permission, PolicyEngine},
+    redact::{RedactConfig, RedactEngine},
+    AuditLog, TokenAuthority,
+};
 use atlas_indexer::HybridQuery;
 use atlas_ingest::{policy::AllowAll, Ingester};
+use atlas_lineage::{EdgeKind, LineageEdge, LineageJournal};
 use atlas_version::{Change, Version};
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
@@ -157,6 +163,43 @@ enum Cmd {
         #[arg(long, env = "ATLAS_EMBEDDER_URL")]
         embedder_url: Option<String>,
     },
+
+    // -----------------------------------------------------------------------
+    // Phase 4 — Lineage and governance
+    // -----------------------------------------------------------------------
+    /// Lineage graph operations (T4.1, T4.2, T4.3).
+    #[command(subcommand)]
+    Lineage(LineageCmd),
+
+    /// Policy engine operations (T4.4, T4.7).
+    #[command(subcommand)]
+    Policy(PolicyCmd),
+
+    /// Capability token operations (T4.5).
+    #[command(subcommand)]
+    Token(TokenCmd),
+
+    /// Audit log operations (T4.8).
+    #[command(subcommand)]
+    Audit(AuditCmd),
+
+    /// Detect and redact PII from a file's text content (T4.6).
+    Redact {
+        /// ATLAS path to the file.
+        path: String,
+        /// Redact email addresses.
+        #[arg(long, default_value_t = true)]
+        email: bool,
+        /// Redact US Social Security numbers.
+        #[arg(long, default_value_t = true)]
+        ssn: bool,
+        /// Redact API keys and bearer tokens.
+        #[arg(long, default_value_t = true)]
+        api_keys: bool,
+        /// Print only whether PII was found, not the redacted text.
+        #[arg(long)]
+        check_only: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -167,6 +210,127 @@ enum BranchCmd {
     List,
     /// Delete a branch (cannot delete the branch HEAD points at).
     Delete { name: String },
+}
+
+#[derive(Subcommand, Debug)]
+enum LineageCmd {
+    /// Record an explicit lineage edge (T4.2).
+    Record {
+        /// Source object hash (producer / input).
+        #[arg(long)]
+        source: String,
+        /// Sink object hash (consumer / output).
+        #[arg(long)]
+        sink: String,
+        /// Edge kind: read | write | derive | copy | transform.
+        #[arg(long, default_value = "derive")]
+        kind: String,
+        /// Agent identifier (process, user, service).
+        #[arg(long, default_value = "")]
+        agent: String,
+        /// Lineage journal directory (default: <store>/.atlas-lineage).
+        #[arg(long)]
+        lineage_dir: Option<PathBuf>,
+    },
+    /// Show direct parents and children of an object hash.
+    Show {
+        /// Content hash to query.
+        hash: String,
+        /// BFS depth for ancestor/descendant traversal.
+        #[arg(long, default_value_t = 3)]
+        depth: usize,
+        /// Lineage journal directory (default: <store>/.atlas-lineage).
+        #[arg(long)]
+        lineage_dir: Option<PathBuf>,
+    },
+    /// Summarise lineage activity in time windows (T4.3).
+    Rollup {
+        /// Window size in seconds.
+        #[arg(long, default_value_t = 3600)]
+        window_secs: u64,
+        /// Lineage journal directory (default: <store>/.atlas-lineage).
+        #[arg(long)]
+        lineage_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PolicyCmd {
+    /// Evaluate an access request against a policy file (T4.4).
+    Eval {
+        /// Path inside the ATLAS store.
+        #[arg(long)]
+        path: String,
+        /// Principal (user/service name).
+        #[arg(long)]
+        principal: String,
+        /// Permission to test: read | write | delete | list.
+        #[arg(long)]
+        perm: String,
+        /// YAML policy file to load.
+        #[arg(long)]
+        policy_file: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TokenCmd {
+    /// Issue a new capability token (T4.5).
+    Issue {
+        /// Principal to grant the token to.
+        #[arg(long)]
+        principal: String,
+        /// Path scope prefix (e.g. /data/ml-team/).
+        #[arg(long)]
+        scope: String,
+        /// Permissions to grant (repeatable): read, write, delete, list.
+        #[arg(long)]
+        perm: Vec<String>,
+        /// Token TTL in seconds.
+        #[arg(long, default_value_t = 3600)]
+        ttl: u64,
+        /// Governance directory (default: <store>/.atlas-gov).
+        #[arg(long)]
+        gov_dir: Option<PathBuf>,
+    },
+    /// Verify a capability token's signature and expiry (T4.5).
+    Verify {
+        /// JSON-encoded token (from `token issue`).
+        token_json: String,
+        /// Governance directory (default: <store>/.atlas-gov).
+        #[arg(long)]
+        gov_dir: Option<PathBuf>,
+    },
+    /// Revoke a capability token by ID (T4.5).
+    Revoke {
+        /// Token UUID to revoke.
+        id: String,
+        /// Governance directory (default: <store>/.atlas-gov).
+        #[arg(long)]
+        gov_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AuditCmd {
+    /// Verify the SHA-256 chain integrity of the audit log (T4.8).
+    Verify {
+        /// Governance directory (default: <store>/.atlas-gov).
+        #[arg(long)]
+        gov_dir: Option<PathBuf>,
+    },
+    /// Export a range of audit entries as JSON (T4.8).
+    Export {
+        /// First sequence number to export (inclusive).
+        #[arg(long, default_value_t = 0)]
+        from_seq: u64,
+        /// Last sequence number to export (inclusive).
+        #[arg(long, default_value_t = u64::MAX)]
+        to_seq: u64,
+        /// Governance directory (default: <store>/.atlas-gov).
+        #[arg(long)]
+        gov_dir: Option<PathBuf>,
+    },
 }
 
 fn default_store() -> PathBuf {
@@ -224,6 +388,17 @@ fn main() -> Result<()> {
             index_dir,
             embedder_url.as_deref(),
         ),
+        Cmd::Lineage(sub) => cmd_lineage(&store_path, sub),
+        Cmd::Policy(sub) => cmd_policy(sub),
+        Cmd::Token(sub) => cmd_token(&store_path, sub),
+        Cmd::Audit(sub) => cmd_audit(&store_path, sub),
+        Cmd::Redact {
+            path,
+            email,
+            ssn,
+            api_keys,
+            check_only,
+        } => cmd_redact(&store_path, &path, email, ssn, api_keys, check_only),
     }
 }
 
@@ -566,6 +741,277 @@ fn cmd_find(
     println!("{}", "-".repeat(60));
     for r in results {
         println!("{:<8.4} {:<10} {}", r.score, r.file_hash.short(), r.path);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 helpers
+// ---------------------------------------------------------------------------
+
+fn default_lineage_dir(store: &std::path::Path) -> PathBuf {
+    store.join(".atlas-lineage")
+}
+
+fn default_gov_dir(store: &std::path::Path) -> PathBuf {
+    store.join(".atlas-gov")
+}
+
+// ── Lineage ─────────────────────────────────────────────────────────────────
+
+fn cmd_lineage(store: &std::path::Path, sub: LineageCmd) -> Result<()> {
+    match sub {
+        LineageCmd::Record {
+            source,
+            sink,
+            kind,
+            agent,
+            lineage_dir,
+        } => {
+            let dir = lineage_dir.unwrap_or_else(|| default_lineage_dir(store));
+            let mut j =
+                LineageJournal::open(&dir).map_err(|e| anyhow!("open lineage journal: {e}"))?;
+            let src =
+                Hash::from_hex(&source).map_err(|_| anyhow!("invalid source hash: {source}"))?;
+            let snk = Hash::from_hex(&sink).map_err(|_| anyhow!("invalid sink hash: {sink}"))?;
+            let ek: EdgeKind = kind
+                .parse()
+                .map_err(|e: String| anyhow!("invalid edge kind: {e}"))?;
+            let edge = LineageEdge::new(
+                ek,
+                src,
+                snk,
+                if agent.is_empty() { "atlasctl" } else { &agent },
+            );
+            j.record(edge).map_err(|e| anyhow!("record edge: {e}"))?;
+            println!("recorded lineage edge");
+            Ok(())
+        }
+        LineageCmd::Show {
+            hash,
+            depth,
+            lineage_dir,
+        } => {
+            let dir = lineage_dir.unwrap_or_else(|| default_lineage_dir(store));
+            let j = LineageJournal::open(&dir).map_err(|e| anyhow!("open lineage journal: {e}"))?;
+            let h = Hash::from_hex(&hash).map_err(|_| anyhow!("invalid hash: {hash}"))?;
+            let parents = j.parents(&h).map_err(|e| anyhow!("{e}"))?;
+            let children = j.children(&h).map_err(|e| anyhow!("{e}"))?;
+            let ancestors = j.ancestors(&h, depth).map_err(|e| anyhow!("{e}"))?;
+            let descendants = j.descendants(&h, depth).map_err(|e| anyhow!("{e}"))?;
+            println!("=== {} ===", &hash[..16.min(hash.len())]);
+            println!("Direct parents ({}):", parents.len());
+            for e in &parents {
+                println!(
+                    "  {} <- {} ({})",
+                    &e.sink_hash.to_hex()[..8],
+                    &e.source_hash.to_hex()[..8],
+                    e.kind
+                );
+            }
+            println!("Direct children ({}):", children.len());
+            for e in &children {
+                println!(
+                    "  {} -> {} ({})",
+                    &e.source_hash.to_hex()[..8],
+                    &e.sink_hash.to_hex()[..8],
+                    e.kind
+                );
+            }
+            println!("Ancestors up to depth {depth}: {}", ancestors.len());
+            println!("Descendants up to depth {depth}: {}", descendants.len());
+            Ok(())
+        }
+        LineageCmd::Rollup {
+            window_secs,
+            lineage_dir,
+        } => {
+            let dir = lineage_dir.unwrap_or_else(|| default_lineage_dir(store));
+            let j = LineageJournal::open(&dir).map_err(|e| anyhow!("open lineage journal: {e}"))?;
+            let edges = j.all_edges().map_err(|e| anyhow!("{e}"))?;
+            let buckets = atlas_lineage::rollup::rollup_window(&edges, window_secs);
+            if buckets.is_empty() {
+                println!("(no edges recorded)");
+                return Ok(());
+            }
+            println!("{:<20} {:>8}  counts", "window_start", "total");
+            println!("{}", "-".repeat(50));
+            for b in &buckets {
+                let total: usize = b.counts.values().sum();
+                let detail: Vec<String> =
+                    b.counts.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                println!(
+                    "{:<20} {:>8}  {}",
+                    b.window_start_ms,
+                    total,
+                    detail.join(", ")
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+// ── Policy ──────────────────────────────────────────────────────────────────
+
+fn cmd_policy(sub: PolicyCmd) -> Result<()> {
+    match sub {
+        PolicyCmd::Eval {
+            path,
+            principal,
+            perm,
+            policy_file,
+        } => {
+            let permission: Permission = perm
+                .parse()
+                .map_err(|e: String| anyhow!("invalid permission: {e}"))?;
+            let mut engine = PolicyEngine::new();
+            engine
+                .load_yaml_file(&policy_file)
+                .map_err(|e| anyhow!("load policy: {e}"))?;
+            let req = AccessRequest {
+                path: path.clone(),
+                principal: principal.clone(),
+                permission,
+            };
+            match engine.evaluate(&req) {
+                atlas_governor::Decision::Allow => {
+                    println!("ALLOW  {principal} {perm} {path}");
+                }
+                atlas_governor::Decision::Deny(reason) => {
+                    println!("DENY   {principal} {perm} {path}");
+                    println!("       {reason}");
+                    std::process::exit(1);
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+// ── Token ───────────────────────────────────────────────────────────────────
+
+fn cmd_token(store: &std::path::Path, sub: TokenCmd) -> Result<()> {
+    match sub {
+        TokenCmd::Issue {
+            principal,
+            scope,
+            perm,
+            ttl,
+            gov_dir,
+        } => {
+            let dir = gov_dir.unwrap_or_else(|| default_gov_dir(store));
+            let auth =
+                TokenAuthority::open(&dir).map_err(|e| anyhow!("open token authority: {e}"))?;
+            let permissions: Vec<Permission> = perm
+                .iter()
+                .map(|p| {
+                    p.parse::<Permission>()
+                        .map_err(|e| anyhow!("invalid permission {p:?}: {e}"))
+                })
+                .collect::<Result<_>>()?;
+            let token = auth
+                .issue(&principal, &scope, permissions, ttl)
+                .map_err(|e| anyhow!("issue token: {e}"))?;
+            println!("{}", token.encode().map_err(|e| anyhow!("encode: {e}"))?);
+            Ok(())
+        }
+        TokenCmd::Verify {
+            token_json,
+            gov_dir,
+        } => {
+            let dir = gov_dir.unwrap_or_else(|| default_gov_dir(store));
+            let auth =
+                TokenAuthority::open(&dir).map_err(|e| anyhow!("open token authority: {e}"))?;
+            let token = atlas_governor::CapabilityToken::decode(&token_json)
+                .map_err(|e| anyhow!("decode token: {e}"))?;
+            match auth.verify(&token) {
+                Ok(()) => println!(
+                    "VALID  id={} principal={} scope={}",
+                    token.id, token.principal, token.scope_path
+                ),
+                Err(e) => {
+                    println!("INVALID  {e}");
+                    std::process::exit(1);
+                }
+            }
+            Ok(())
+        }
+        TokenCmd::Revoke { id, gov_dir } => {
+            let dir = gov_dir.unwrap_or_else(|| default_gov_dir(store));
+            let mut auth =
+                TokenAuthority::open(&dir).map_err(|e| anyhow!("open token authority: {e}"))?;
+            auth.revoke(&id).map_err(|e| anyhow!("revoke: {e}"))?;
+            println!("revoked token {id}");
+            Ok(())
+        }
+    }
+}
+
+// ── Audit ───────────────────────────────────────────────────────────────────
+
+fn cmd_audit(store: &std::path::Path, sub: AuditCmd) -> Result<()> {
+    match sub {
+        AuditCmd::Verify { gov_dir } => {
+            let dir = gov_dir.unwrap_or_else(|| default_gov_dir(store));
+            let log = AuditLog::open(&dir).map_err(|e| anyhow!("open audit log: {e}"))?;
+            match log.verify_chain().map_err(|e| anyhow!("{e}"))? {
+                true => println!("audit log intact"),
+                false => {
+                    eprintln!("audit log TAMPERED — chain broken");
+                    std::process::exit(2);
+                }
+            }
+            Ok(())
+        }
+        AuditCmd::Export {
+            from_seq,
+            to_seq,
+            gov_dir,
+        } => {
+            let dir = gov_dir.unwrap_or_else(|| default_gov_dir(store));
+            let log = AuditLog::open(&dir).map_err(|e| anyhow!("open audit log: {e}"))?;
+            let entries = log
+                .export_range(from_seq, to_seq)
+                .map_err(|e| anyhow!("{e}"))?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&entries).map_err(|e| anyhow!("serialize: {e}"))?
+            );
+            Ok(())
+        }
+    }
+}
+
+// ── Redact ──────────────────────────────────────────────────────────────────
+
+fn cmd_redact(
+    store: &std::path::Path,
+    path: &str,
+    email: bool,
+    ssn: bool,
+    api_keys: bool,
+    check_only: bool,
+) -> Result<()> {
+    let fs = Fs::open(store).context("open store")?;
+    let bytes = fs.read(path).context("read file")?;
+    let text = String::from_utf8_lossy(&bytes);
+    let cfg = RedactConfig {
+        redact_email: email,
+        redact_ssn: ssn,
+        redact_api_keys: api_keys,
+        custom_patterns: vec![],
+    };
+    let engine = RedactEngine::new(&cfg).map_err(|e| anyhow!("build redactor: {e}"))?;
+    if check_only {
+        if engine.has_pii(&text) {
+            println!("PII DETECTED in {path}");
+            std::process::exit(1);
+        } else {
+            println!("no PII detected in {path}");
+        }
+    } else {
+        print!("{}", engine.redact(&text));
     }
     Ok(())
 }
