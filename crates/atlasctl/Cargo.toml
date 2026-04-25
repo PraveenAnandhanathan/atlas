@@ -1,0 +1,24 @@
+[package]
+name = "atlasctl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS command-line interface."
+
+[[bin]]
+name = "atlasctl"
+path = "src/main.rs"
+
+[dependencies]
+atlas-core = { workspace = true }
+atlas-fs = { workspace = true }
+atlas-version = { workspace = true }
+atlas-object = { workspace = true }
+atlas-chunk = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+hex = { workspace = true }

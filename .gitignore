@@ -1,0 +1,43 @@
+# Rust
+/target
+**/target
+Cargo.lock.bak
+*.rs.bk
+*.pdb
+
+# IDE
+.idea/
+.vscode/
+*.iml
+.DS_Store
+.claude/
+
+# ATLAS local stores (default: ~/.atlas, but also in-tree for tests)
+.atlas-store/
+*.atlas-store/
+**/fixtures/.atlas-store/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+
+# Node
+node_modules/
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# CI / local
+.env
+.env.*
+*.log
+coverage/
+/scratch/

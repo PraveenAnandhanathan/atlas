@@ -1,0 +1,20 @@
+[package]
+name = "atlas-version"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS versioning: commits, branches, log, diff, checkout."
+
+[dependencies]
+atlas-core = { workspace = true }
+atlas-fs = { workspace = true }
+atlas-meta = { workspace = true }
+atlas-object = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

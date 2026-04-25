@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "atlas-sdk"
+version = "0.1.0"
+description = "ATLAS Python SDK — v0.1 (subprocess wrapper around atlasctl)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "ATLAS contributors" }]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Homepage = "https://github.com/PraveenAnandhanathan/atlas"
+Repository = "https://github.com/PraveenAnandhanathan/atlas"
+
+[tool.hatch.build.targets.wheel]
+packages = ["atlas"]

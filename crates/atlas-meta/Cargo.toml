@@ -1,0 +1,20 @@
+[package]
+name = "atlas-meta"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS metadata plane — sled-backed KV behind a MetaStore trait (ADR-0003)."
+
+[dependencies]
+atlas-core = { workspace = true }
+atlas-object = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true }
+sled = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

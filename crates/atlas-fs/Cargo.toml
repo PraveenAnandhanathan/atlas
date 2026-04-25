@@ -1,0 +1,22 @@
+[package]
+name = "atlas-fs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ATLAS high-level filesystem engine: put/get/list/stat/rename/delete on top of chunks + meta + objects."
+
+[dependencies]
+atlas-core = { workspace = true }
+atlas-chunk = { workspace = true }
+atlas-object = { workspace = true }
+atlas-meta = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }
