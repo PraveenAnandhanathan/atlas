@@ -1,0 +1,16 @@
+[package]
+name = "atlas-rest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ATLAS REST adapter and OpenAPI generator (T5.4)."
+
+[dependencies]
+atlas-mcp.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+atlas-fs.workspace = true
+tempfile.workspace = true

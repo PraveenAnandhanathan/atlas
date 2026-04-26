@@ -183,6 +183,9 @@ enum Cmd {
     #[command(subcommand)]
     Audit(AuditCmd),
 
+    /// Serve the MCP endpoint over stdio, optionally scoped to a subtree (T5.2).
+    Mcp(McpCmd),
+
     /// Detect and redact PII from a file's text content (T4.6).
     Redact {
         /// ATLAS path to the file.
@@ -200,6 +203,23 @@ enum Cmd {
         #[arg(long)]
         check_only: bool,
     },
+}
+
+#[derive(Parser, Debug)]
+struct McpCmd {
+    #[command(subcommand)]
+    sub: McpSub,
+}
+
+#[derive(Subcommand, Debug)]
+enum McpSub {
+    /// Serve MCP over stdio (newline-delimited JSON-RPC).
+    Serve {
+        /// Subtree to scope the server to. Paths outside it are 403.
+        path: Option<String>,
+    },
+    /// List the full MCP tool catalog as JSON.
+    Tools,
 }
 
 #[derive(Subcommand, Debug)]
@@ -392,6 +412,7 @@ fn main() -> Result<()> {
         Cmd::Policy(sub) => cmd_policy(sub),
         Cmd::Token(sub) => cmd_token(&store_path, sub),
         Cmd::Audit(sub) => cmd_audit(&store_path, sub),
+        Cmd::Mcp(m) => cmd_mcp(&store_path, m),
         Cmd::Redact {
             path,
             email,
@@ -978,6 +999,52 @@ fn cmd_audit(store: &std::path::Path, sub: AuditCmd) -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&entries).map_err(|e| anyhow!("serialize: {e}"))?
             );
+            Ok(())
+        }
+    }
+}
+
+// ── MCP serve (T5.2) ────────────────────────────────────────────────────────
+
+fn cmd_mcp(store: &std::path::Path, m: McpCmd) -> Result<()> {
+    use std::io::BufRead;
+    use std::sync::Arc;
+
+    match m.sub {
+        McpSub::Tools => {
+            let tools: Vec<_> = atlas_mcp::tool_descriptors()
+                .into_iter()
+                .map(|d| {
+                    serde_json::json!({
+                        "name": d.name,
+                        "description": d.description,
+                        "input_schema": d.input_schema,
+                        "mutates": d.mutates,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&tools)?);
+            Ok(())
+        }
+        McpSub::Serve { path } => {
+            let fs = Fs::open(store).context("open store")?;
+            let mut core = atlas_mcp::CapabilityCore::new(Arc::new(fs));
+            if let Some(p) = path {
+                core = core.with_subtree(p);
+            }
+            let stdin = std::io::stdin();
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            for line in stdin.lock().lines() {
+                let line = line?;
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let resp = atlas_mcp::handle_line(&core, &line);
+                use std::io::Write;
+                writeln!(out, "{resp}")?;
+                out.flush()?;
+            }
             Ok(())
         }
     }

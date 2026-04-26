@@ -28,6 +28,14 @@ members = [
     # Phase 4 — Lineage and governance
     "crates/atlas-lineage",
     "crates/atlas-governor",
+    # Phase 5 — MCP and protocols
+    "crates/atlas-mcp",
+    "crates/atlas-a2a",
+    "crates/atlas-rest",
+    "crates/atlas-grpc",
+    "crates/atlas-s3",
+    "crates/atlas-toolwire",
+    "crates/atlas-conformance",
 ]
 
 [workspace.package]
@@ -115,6 +123,13 @@ atlas-indexer = { path = "crates/atlas-indexer", version = "0.1.0" }
 atlas-ingest = { path = "crates/atlas-ingest", version = "0.1.0" }
 atlas-lineage = { path = "crates/atlas-lineage", version = "0.1.0" }
 atlas-governor = { path = "crates/atlas-governor", version = "0.1.0" }
+atlas-mcp = { path = "crates/atlas-mcp", version = "0.1.0" }
+atlas-a2a = { path = "crates/atlas-a2a", version = "0.1.0" }
+atlas-rest = { path = "crates/atlas-rest", version = "0.1.0" }
+atlas-grpc = { path = "crates/atlas-grpc", version = "0.1.0" }
+atlas-s3 = { path = "crates/atlas-s3", version = "0.1.0" }
+atlas-toolwire = { path = "crates/atlas-toolwire", version = "0.1.0" }
+atlas-conformance = { path = "crates/atlas-conformance", version = "0.1.0" }
 
 [profile.release]
 lto = "thin"

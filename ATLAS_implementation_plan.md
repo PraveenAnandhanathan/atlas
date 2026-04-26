@@ -164,72 +164,72 @@ Each workstream is owned by one lead and maps to a slice of [section 15](./ATLAS
 
 **Tasks**
 
-- [ ] T0.1 Freeze v0.1 on-disk spec (chunks, blob/file/directory manifests)
-- [ ] T0.2 Choose hash function (BLAKE3) and chunk size (4 MiB default) — written ADR
-- [ ] T0.3 Scaffolding: monorepo, Rust workspace, CI, lint, test matrix
-- [ ] T0.4 `atlas-storage` single-node: put/get/delete/verify chunks over gRPC
-- [ ] T0.5 `atlas-meta` v0 on RocksDB: inodes, xattrs, refs
-- [ ] T0.6 Object-model library: compose chunks+metadata into file/dir manifests
-- [ ] T0.7 `atlas-fuse` minimum ops: getattr, readdir, open, read, write, create, unlink, rename, setxattr, getxattr
-- [ ] T0.8 `atlasctl` MVP: mount, ls, stat, cat, cp, mv, rm
-- [ ] T0.9 Property tests on object model; fuzz on on-disk spec
-- [ ] T0.10 pjdfstest subset CI job
+- [x] T0.1 Freeze v0.1 on-disk spec (chunks, blob/file/directory manifests)
+- [x] T0.2 Choose hash function (BLAKE3) and chunk size (4 MiB default) — written ADR
+- [x] T0.3 Scaffolding: monorepo, Rust workspace, CI, lint, test matrix
+- [x] T0.4 `atlas-storage` single-node: put/get/delete/verify chunks over gRPC
+- [x] T0.5 `atlas-meta` v0 on RocksDB: inodes, xattrs, refs
+- [x] T0.6 Object-model library: compose chunks+metadata into file/dir manifests
+- [x] T0.7 `atlas-fuse` minimum ops: getattr, readdir, open, read, write, create, unlink, rename, setxattr, getxattr
+- [x] T0.8 `atlasctl` MVP: mount, ls, stat, cat, cp, mv, rm
+- [x] T0.9 Property tests on object model; fuzz on on-disk spec
+- [x] T0.10 pjdfstest subset CI job
 
 ### Phase 1 — Versioning (M6–10)
 
-- [ ] T1.1 Commit record + commit graph in metadata
-- [ ] T1.2 Branch creation / deletion / listing (O(1) branch create)
-- [ ] T1.3 CoW write path with manifest chaining
-- [ ] T1.4 `atlasctl commit | checkout | log | diff | branch`
-- [ ] T1.5 Time-travel mount (`atlas://vol/@commit/…` read-only)
-- [ ] T1.6 Python SDK v0.1: `atlas.open`, `atlas.branch`, `atlas.commit`
-- [ ] T1.7 Dedup benchmark on 10 GB / 1% mutation tree
-- [ ] T1.8 Format plugin `atlas-fmt-safetensors` (tensor-slice reads)
+- [x] T1.1 Commit record + commit graph in metadata
+- [x] T1.2 Branch creation / deletion / listing (O(1) branch create)
+- [x] T1.3 CoW write path with manifest chaining
+- [x] T1.4 `atlasctl commit | checkout | log | diff | branch`
+- [x] T1.5 Time-travel mount (`atlas://vol/@commit/…` read-only)
+- [x] T1.6 Python SDK v0.1: `atlas.open`, `atlas.branch`, `atlas.commit`
+- [x] T1.7 Dedup benchmark on 10 GB / 1% mutation tree
+- [x] T1.8 Format plugin `atlas-fmt-safetensors` (tensor-slice reads)
 
 ### Phase 2 — Distributed (M10–16)
 
-- [ ] T2.1 Multi-node `atlas-storage` with CRAQ chain replication
-- [ ] T2.2 Chunk placement policy (capacity-aware, rack-aware stub)
-- [ ] T2.3 FoundationDB-backed metadata adapter; dual-backend behind trait
-- [ ] T2.4 RDMA transport (RoCE v2 first, IB later); TCP fallback
-- [ ] T2.5 `atlas-gc` background chunk GC with refcount journal
-- [ ] T2.6 `atlas-bench` suite vs NFS, ext4, 3FS where possible
-- [ ] T2.7 Crash-recovery tests for torn writes and replica drops
-- [ ] T2.8 `atlas-deploy` installer for single-node and 3-node cluster
+- [x] T2.1 Multi-node `atlas-storage` with CRAQ chain replication
+- [x] T2.2 Chunk placement policy (capacity-aware, rack-aware stub)
+- [x] T2.3 FoundationDB-backed metadata adapter; dual-backend behind trait
+- [x] T2.4 RDMA transport (RoCE v2 first, IB later); TCP fallback
+- [x] T2.5 `atlas-gc` background chunk GC with refcount journal
+- [x] T2.6 `atlas-bench` suite vs NFS, ext4, 3FS where possible
+- [x] T2.7 Crash-recovery tests for torn writes and replica drops
+- [x] T2.8 `atlas-deploy` installer for single-node and 3-node cluster
 
 ### Phase 3 — Semantic (M14–20, overlaps P2)
 
-- [ ] T3.1 `atlas-embedder` service (Python, GPU-aware), model registry
-- [ ] T3.2 `atlas-indexer` with DiskANN + Tantivy + structured KV index
-- [ ] T3.3 Ingest pipeline: format detect → extract → chunk → embed → index
-- [ ] T3.4 Format plugins: parquet, pdf, docx, jsonl, image, audio, zarr, arrow
-- [ ] T3.5 Hybrid query API (`vector AND keyword AND xattr filter`)
-- [ ] T3.6 `atlas.semantic.*` SDK and `atlasctl find`
-- [ ] T3.7 Re-embedding job framework (model-version tagging)
-- [ ] T3.8 Policy-aware query filter (don't surface unreadable results)
+- [x] T3.1 `atlas-embedder` service (Python, GPU-aware), model registry
+- [x] T3.2 `atlas-indexer` with DiskANN + Tantivy + structured KV index
+- [x] T3.3 Ingest pipeline: format detect → extract → chunk → embed → index
+- [x] T3.4 Format plugins: parquet, pdf, docx, jsonl, image, audio, zarr, arrow
+- [x] T3.5 Hybrid query API (`vector AND keyword AND xattr filter`)
+- [x] T3.6 `atlas.semantic.*` SDK and `atlasctl find`
+- [x] T3.7 Re-embedding job framework (model-version tagging)
+- [x] T3.8 Policy-aware query filter (don't surface unreadable results)
 
 ### Phase 4 — Lineage and governance (M18–24)
 
-- [ ] T4.1 `atlas-lineage` edge journal + graph query service
-- [ ] T4.2 Implicit tracking at FUSE layer; explicit `atlas.lineage.record`
-- [ ] T4.3 Sampling controls + lineage rollups
-- [ ] T4.4 `atlas-governor` policy engine with evaluate-at-open
-- [ ] T4.5 Capability-token issuance, verification, revocation
-- [ ] T4.6 Read-time redaction (names/emails/SSNs/API keys detectors)
-- [ ] T4.7 Lineage-constraint enforcement on write
-- [ ] T4.8 Merkle-tree audit log, export tooling
-- [ ] T4.9 Commit and policy signing (local key + KMS)
+- [x] T4.1 `atlas-lineage` edge journal + graph query service
+- [x] T4.2 Implicit tracking at FUSE layer; explicit `atlas.lineage.record`
+- [x] T4.3 Sampling controls + lineage rollups
+- [x] T4.4 `atlas-governor` policy engine with evaluate-at-open
+- [x] T4.5 Capability-token issuance, verification, revocation
+- [x] T4.6 Read-time redaction (names/emails/SSNs/API keys detectors)
+- [x] T4.7 Lineage-constraint enforcement on write
+- [x] T4.8 Merkle-tree audit log, export tooling
+- [x] T4.9 Commit and policy signing (local key + KMS)
 
 ### Phase 5 — MCP and protocols (M22–28)
 
-- [ ] T5.1 `atlas-mcp` server with full tool catalog from design §7.1
-- [ ] T5.2 Subtree-scoped MCP serve (`atlasctl mcp serve <path>`)
-- [ ] T5.3 `atlas-a2a` agent adapter — reference integration
-- [ ] T5.4 `atlas-rest` + OpenAPI spec
-- [ ] T5.5 `atlas-grpc` service definitions + reflection
-- [ ] T5.6 `atlas-s3` gateway (S3 v4 signing, bucket=volume, key=path)
-- [ ] T5.7 Anthropic tool-use / OpenAI function-calling JSON adapters on top of MCP
-- [ ] T5.8 Adapter conformance test harness (one capability, N wire formats)
+- [x] T5.1 `atlas-mcp` server with full tool catalog from design §7.1
+- [x] T5.2 Subtree-scoped MCP serve (`atlasctl mcp serve <path>`)
+- [x] T5.3 `atlas-a2a` agent adapter — reference integration
+- [x] T5.4 `atlas-rest` + OpenAPI spec
+- [x] T5.5 `atlas-grpc` service definitions + reflection
+- [x] T5.6 `atlas-s3` gateway (S3 v4 signing, bucket=volume, key=path)
+- [x] T5.7 Anthropic tool-use / OpenAI function-calling JSON adapters on top of MCP
+- [x] T5.8 Adapter conformance test harness (one capability, N wire formats)
 
 ### Phase 6 — Desktop integration (M26–34)
 

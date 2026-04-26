@@ -1,0 +1,15 @@
+[package]
+name = "atlas-toolwire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Anthropic tool-use and OpenAI function-calling adapters on top of MCP (T5.7)."
+
+[dependencies]
+atlas-mcp.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+atlas-fs.workspace = true
+tempfile.workspace = true

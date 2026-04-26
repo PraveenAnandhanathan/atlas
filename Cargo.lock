@@ -123,6 +123,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-a2a"
+version = "0.1.0"
+dependencies = [
+ "atlas-fs",
+ "atlas-mcp",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "atlas-bench"
 version = "0.1.0"
 dependencies = [
@@ -144,6 +156,21 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "atlas-conformance"
+version = "0.1.0"
+dependencies = [
+ "atlas-a2a",
+ "atlas-fs",
+ "atlas-grpc",
+ "atlas-mcp",
+ "atlas-rest",
+ "atlas-s3",
+ "atlas-toolwire",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -243,6 +270,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-grpc"
+version = "0.1.0"
+dependencies = [
+ "atlas-fs",
+ "atlas-mcp",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "atlas-indexer"
 version = "0.1.0"
 dependencies = [
@@ -280,6 +318,26 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "atlas-mcp"
+version = "0.1.0"
+dependencies = [
+ "atlas-core",
+ "atlas-fs",
+ "atlas-governor",
+ "atlas-indexer",
+ "atlas-lineage",
+ "atlas-object",
+ "atlas-version",
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
  "uuid",
 ]
 
@@ -388,6 +446,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-rest"
+version = "0.1.0"
+dependencies = [
+ "atlas-fs",
+ "atlas-mcp",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "atlas-s3"
+version = "0.1.0"
+dependencies = [
+ "atlas-core",
+ "atlas-fs",
+ "atlas-mcp",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "atlas-storage"
 version = "0.1.0"
 dependencies = [
@@ -403,6 +487,17 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "atlas-toolwire"
+version = "0.1.0"
+dependencies = [
+ "atlas-fs",
+ "atlas-mcp",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -443,6 +538,7 @@ dependencies = [
  "atlas-indexer",
  "atlas-ingest",
  "atlas-lineage",
+ "atlas-mcp",
  "atlas-object",
  "atlas-version",
  "clap",
