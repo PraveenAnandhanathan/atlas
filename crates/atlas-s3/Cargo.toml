@@ -1,0 +1,18 @@
+[package]
+name = "atlas-s3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ATLAS S3 v4 gateway: bucket=volume, key=path (T5.6)."
+
+[dependencies]
+atlas-mcp.workspace = true
+atlas-core.workspace = true
+atlas-fs.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

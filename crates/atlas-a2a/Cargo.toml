@@ -1,0 +1,16 @@
+[package]
+name = "atlas-a2a"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ATLAS A2A (Agent-to-Agent) reference adapter (T5.3)."
+
+[dependencies]
+atlas-mcp.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+atlas-fs.workspace = true
+tempfile.workspace = true

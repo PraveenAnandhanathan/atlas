@@ -21,6 +21,7 @@ atlas-indexer = { workspace = true }
 atlas-ingest = { workspace = true }
 atlas-lineage = { workspace = true }
 atlas-governor = { workspace = true }
+atlas-mcp = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

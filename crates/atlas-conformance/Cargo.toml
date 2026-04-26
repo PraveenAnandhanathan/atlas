@@ -1,0 +1,19 @@
+[package]
+name = "atlas-conformance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Adapter conformance harness — one capability, N wire formats (T5.8)."
+
+[dependencies]
+atlas-mcp.workspace = true
+atlas-a2a.workspace = true
+atlas-rest.workspace = true
+atlas-grpc.workspace = true
+atlas-s3.workspace = true
+atlas-toolwire.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+atlas-fs.workspace = true
+tempfile.workspace = true
