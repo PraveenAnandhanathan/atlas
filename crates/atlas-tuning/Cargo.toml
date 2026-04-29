@@ -1,0 +1,21 @@
+[package]
+name = "atlas-tuning"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ATLAS per-workload performance tuning profiles (T7.6)."
+
+[dependencies]
+atlas-core.workspace = true
+atlas-fs.workspace = true
+atlas-chunk.workspace = true
+atlas-storage.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

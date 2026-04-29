@@ -1,0 +1,29 @@
+[package]
+name = "atlas-chaos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ATLAS fault-injection framework and nightly chaos harness (T7.1)."
+
+[[bin]]
+name = "atlas-chaos"
+path = "src/main.rs"
+
+[dependencies]
+atlas-core.workspace = true
+atlas-fs.workspace = true
+atlas-storage.workspace = true
+atlas-meta.workspace = true
+atlas-replicate.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio = { workspace = true }
+rand.workspace = true
+clap = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true

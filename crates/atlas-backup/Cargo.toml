@@ -1,0 +1,30 @@
+[package]
+name = "atlas-backup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ATLAS backup, snapshot export, and cross-region replication (T7.2)."
+
+[[bin]]
+name = "atlas-backup"
+path = "src/main.rs"
+
+[dependencies]
+atlas-core.workspace = true
+atlas-fs.workspace = true
+atlas-chunk.workspace = true
+atlas-object.workspace = true
+atlas-version.workspace = true
+blake3.workspace = true
+hex.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio = { workspace = true }
+clap = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true

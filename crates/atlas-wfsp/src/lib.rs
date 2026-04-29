@@ -30,12 +30,7 @@
 //! use std::path::PathBuf;
 //!
 //! let fs = Fs::open(PathBuf::from(r"C:\atlas-store")).unwrap();
-//! let cfg = WfspConfig {
-//!     mount_point: "Z:".into(),
-//!     volume_label: "ATLAS".into(),
-//!     read_only: false,
-//!     debug: false,
-//! };
+//! let cfg = WfspConfig { mount_point: "Z:".into(), ..WfspConfig::default() };
 //! let mount = WfspMount::new(fs, cfg).unwrap();
 //! mount.run(); // blocks until unmounted
 //! ```
