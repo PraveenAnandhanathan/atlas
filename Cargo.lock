@@ -197,6 +197,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-explorer-ipc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-core",
+ "atlas-fs",
+ "atlas-mcp",
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "atlas-fileprovider-mac"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-core",
+ "atlas-fmt-safetensors",
+ "atlas-fs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "atlas-fmt-safetensors"
 version = "0.1.0"
 dependencies = [
@@ -278,6 +309,20 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "atlas-gvfs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-core",
+ "atlas-fs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -397,6 +442,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-onboarding"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-core",
+ "atlas-fs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "atlas-placement"
 version = "0.1.0"
 dependencies = [
@@ -472,6 +531,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-shellext-win"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-core",
+ "atlas-fs",
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "atlas-storage"
 version = "0.1.0"
 dependencies = [
@@ -527,20 +601,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-wfsp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-core",
+ "atlas-fs",
+ "atlas-mcp",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "atlasctl"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "atlas-chunk",
  "atlas-core",
+ "atlas-fileprovider-mac",
  "atlas-fs",
  "atlas-governor",
+ "atlas-gvfs",
  "atlas-indexer",
  "atlas-ingest",
  "atlas-lineage",
  "atlas-mcp",
  "atlas-object",
+ "atlas-onboarding",
+ "atlas-shellext-win",
  "atlas-version",
+ "atlas-wfsp",
  "clap",
  "hex",
  "serde_json",

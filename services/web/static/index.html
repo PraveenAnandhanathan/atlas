@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ATLAS Admin Console</title>
+  <style>
+    :root {
+      --bg: #0f1117; --surface: #1a1d27; --accent: #6366f1;
+      --text: #e2e8f0; --text-dim: #94a3b8; --border: #2d3148;
+      --success: #22c55e; --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 0 24px; display: flex; align-items: center; height: 56px; gap: 16px;
+    }
+    .logo { font-weight: 700; color: var(--accent); font-size: 1.1rem; }
+    .nav-links { display: flex; gap: 4px; }
+    .nav-links a {
+      padding: 6px 12px; border-radius: 6px; text-decoration: none;
+      color: var(--text-dim); font-size: 0.875rem;
+    }
+    .nav-links a:hover, .nav-links a.active { background: var(--accent); color: #fff; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); margin-left: auto; }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 32px 24px; }
+    h1 { font-size: 1.5rem; margin-bottom: 24px; }
+    h2 { font-size: 1rem; color: var(--text-dim); text-transform: uppercase;
+         letter-spacing: 0.08em; margin-bottom: 12px; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 32px; }
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 20px;
+    }
+    .card .value { font-size: 2rem; font-weight: 700; color: var(--accent); }
+    .card .label { font-size: 0.8rem; color: var(--text-dim); margin-top: 4px; }
+
+    .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { text-align: left; padding: 10px 16px; color: var(--text-dim);
+         background: var(--surface); border-bottom: 1px solid var(--border);
+         font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    td { padding: 10px 16px; border-bottom: 1px solid var(--border); }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    .mono { font-family: monospace; font-size: 0.8rem; color: var(--text-dim); }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem;
+    }
+    .badge-ok   { background: rgba(34,197,94,.15); color: var(--success); }
+    .badge-err  { background: rgba(239,68,68,.15);  color: var(--danger); }
+    .badge-info { background: rgba(99,102,241,.15); color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="logo">⬡ ATLAS Admin</span>
+    <nav class="nav-links">
+      <a href="#" class="active" onclick="showSection('overview')">Overview</a>
+      <a href="#" onclick="showSection('volumes')">Volumes</a>
+      <a href="#" onclick="showSection('nodes')">Nodes</a>
+      <a href="#" onclick="showSection('policies')">Policies</a>
+      <a href="#" onclick="showSection('audit')">Audit</a>
+    </nav>
+    <span class="status-dot" id="status-dot" title="Checking…"></span>
+  </header>
+
+  <div class="container">
+    <!-- Overview -->
+    <section id="section-overview">
+      <h1>Cluster Overview</h1>
+      <div class="grid">
+        <div class="card"><div class="value" id="stat-volumes">—</div><div class="label">Volumes</div></div>
+        <div class="card"><div class="value" id="stat-nodes">—</div><div class="label">Nodes</div></div>
+        <div class="card"><div class="value" id="stat-chunks">—</div><div class="label">Chunks stored</div></div>
+        <div class="card"><div class="value" id="stat-version">—</div><div class="label">Atlas version</div></div>
+      </div>
+      <h2>Recent activity</h2>
+      <div class="table-wrap">
+        <table id="activity-table">
+          <thead><tr><th>Time</th><th>Event</th><th>Principal</th><th>Path</th><th>Result</th></tr></thead>
+          <tbody id="activity-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Volumes -->
+    <section id="section-volumes" hidden>
+      <h1>Volumes</h1>
+      <div class="table-wrap">
+        <table><thead><tr><th>Name</th><th>Branch</th><th>Size</th><th>Commits</th><th>Status</th></tr></thead>
+          <tbody id="volumes-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Nodes -->
+    <section id="section-nodes" hidden>
+      <h1>Storage Nodes</h1>
+      <div class="table-wrap">
+        <table><thead><tr><th>Node</th><th>Role</th><th>Chunks</th><th>Free</th><th>Status</th></tr></thead>
+          <tbody id="nodes-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Policies -->
+    <section id="section-policies" hidden>
+      <h1>Active Policies</h1>
+      <p style="color:var(--text-dim);font-size:0.875rem;margin-bottom:16px">
+        Policies are evaluated at open time. Editing a policy takes effect immediately.
+      </p>
+      <div id="policies-body"></div>
+    </section>
+
+    <!-- Audit -->
+    <section id="section-audit" hidden>
+      <h1>Audit Log</h1>
+      <div class="table-wrap">
+        <table><thead><tr><th>Time</th><th>Kind</th><th>Principal</th><th>Path</th><th>Decision</th></tr></thead>
+          <tbody id="audit-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+const sections = ["overview","volumes","nodes","policies","audit"];
+function showSection(name) {
+  sections.forEach(s => {
+    const el = document.getElementById(`section-${s}`);
+    if (el) el.hidden = (s !== name);
+  });
+  document.querySelectorAll(".nav-links a").forEach(a => a.classList.remove("active"));
+  event.target.classList.add("active");
+  if (name === "overview") loadOverview();
+  else if (name === "volumes") loadVolumes();
+  else if (name === "nodes") loadNodes();
+}
+
+// ---------------------------------------------------------------------------
+// Health check
+// ---------------------------------------------------------------------------
+async function checkHealth() {
+  try {
+    const r = await fetch("/health");
+    const dot = document.getElementById("status-dot");
+    dot.style.background = r.ok ? "var(--success)" : "var(--danger)";
+    if (r.ok) {
+      const d = await r.json();
+      document.getElementById("stat-version").textContent = d.version ?? "?";
+    }
+  } catch { document.getElementById("status-dot").style.background = "var(--danger)"; }
+}
+
+// ---------------------------------------------------------------------------
+// Overview
+// ---------------------------------------------------------------------------
+async function loadOverview() {
+  // Populate with mock data; real console fetches /api/v1/volumes etc.
+  document.getElementById("stat-volumes").textContent = "1";
+  document.getElementById("stat-nodes").textContent = "1";
+  document.getElementById("stat-chunks").textContent = "—";
+
+  const body = document.getElementById("activity-body");
+  const events = [
+    { t: new Date().toLocaleTimeString(), ev: "fs.write", principal: "alice", path: "/models/gpt2.safetensors", ok: true },
+    { t: new Date(Date.now()-5000).toLocaleTimeString(), ev: "policy.eval", principal: "bob", path: "/datasets", ok: true },
+    { t: new Date(Date.now()-12000).toLocaleTimeString(), ev: "fs.read", principal: "guest", path: "/datasets/iris.parquet", ok: false },
+  ];
+  body.innerHTML = events.map(e => `<tr>
+    <td class="mono">${e.t}</td>
+    <td>${e.ev}</td>
+    <td class="mono">${e.principal}</td>
+    <td class="mono">${e.path}</td>
+    <td><span class="badge ${e.ok ? "badge-ok" : "badge-err"}">${e.ok ? "allow" : "deny"}</span></td>
+  </tr>`).join("");
+}
+
+// ---------------------------------------------------------------------------
+// Volumes
+// ---------------------------------------------------------------------------
+async function loadVolumes() {
+  const body = document.getElementById("volumes-body");
+  body.innerHTML = `<tr>
+    <td>default</td>
+    <td class="mono">main</td>
+    <td class="mono">—</td>
+    <td class="mono">1</td>
+    <td><span class="badge badge-ok">healthy</span></td>
+  </tr>`;
+}
+
+// ---------------------------------------------------------------------------
+// Nodes
+// ---------------------------------------------------------------------------
+async function loadNodes() {
+  const body = document.getElementById("nodes-body");
+  body.innerHTML = `<tr>
+    <td class="mono">localhost</td>
+    <td>primary</td>
+    <td class="mono">—</td>
+    <td class="mono">—</td>
+    <td><span class="badge badge-ok">online</span></td>
+  </tr>`;
+}
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+checkHealth();
+setInterval(checkHealth, 30_000);
+loadOverview();
+</script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+[package]
+name = "atlas-web"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "ATLAS web admin console for Team/Scale deployments (T6.8)."
+
+[[bin]]
+name = "atlas-web"
+path = "src/main.rs"
+
+[dependencies]
+atlas-core = { path = "../../crates/atlas-core" }
+atlas-fs = { path = "../../crates/atlas-fs" }
+atlas-mcp = { path = "../../crates/atlas-mcp" }
+atlas-governor = { path = "../../crates/atlas-governor" }
+atlas-lineage = { path = "../../crates/atlas-lineage" }
+atlas-indexer = { path = "../../crates/atlas-indexer" }
+atlas-rest = { path = "../../crates/atlas-rest" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"

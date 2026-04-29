@@ -1,0 +1,27 @@
+[package]
+name = "atlas-explorer"
+version = "0.1.0"
+edition = "2021"
+description = "ATLAS Explorer — Tauri-based desktop GUI (T6.6)."
+license = "Apache-2.0"
+
+[lib]
+name = "atlas_explorer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+atlas-core = { path = "../../../crates/atlas-core" }
+atlas-fs = { path = "../../../crates/atlas-fs" }
+atlas-mcp = { path = "../../../crates/atlas-mcp" }
+atlas-governor = { path = "../../../crates/atlas-governor" }
+atlas-lineage = { path = "../../../crates/atlas-lineage" }
+atlas-indexer = { path = "../../../crates/atlas-indexer" }
+atlas-explorer-ipc = { path = "../../../crates/atlas-explorer-ipc" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
