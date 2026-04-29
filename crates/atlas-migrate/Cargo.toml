@@ -1,0 +1,29 @@
+[package]
+name = "atlas-migrate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ATLAS long-form migration tools from S3, GCS, ext4, and git-LFS (T7.8)."
+
+[[bin]]
+name = "atlas-migrate"
+path = "src/main.rs"
+
+[dependencies]
+atlas-core.workspace = true
+atlas-fs.workspace = true
+atlas-chunk.workspace = true
+atlas-object.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio = { workspace = true }
+clap = { workspace = true }
+reqwest = { workspace = true }
+hex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

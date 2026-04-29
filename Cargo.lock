@@ -135,6 +135,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-auth"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-core",
+ "atlas-governor",
+ "hex",
+ "rand 0.8.6",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "atlas-backup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-chunk",
+ "atlas-core",
+ "atlas-fs",
+ "atlas-object",
+ "atlas-version",
+ "blake3",
+ "clap",
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "atlas-bench"
 version = "0.1.0"
 dependencies = [
@@ -143,6 +185,27 @@ dependencies = [
  "atlas-fs",
  "criterion",
  "tempfile",
+]
+
+[[package]]
+name = "atlas-chaos"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-core",
+ "atlas-fs",
+ "atlas-meta",
+ "atlas-replicate",
+ "atlas-storage",
+ "clap",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -155,6 +218,22 @@ dependencies = [
  "serde",
  "tempfile",
  "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "atlas-compliance"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-core",
+ "atlas-governor",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror",
+ "time",
  "tracing",
 ]
 
@@ -413,6 +492,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-migrate"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-chunk",
+ "atlas-core",
+ "atlas-fs",
+ "atlas-object",
+ "clap",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "atlas-net"
 version = "0.1.0"
 dependencies = [
@@ -487,6 +587,22 @@ dependencies = [
  "atlas-fs",
  "atlas-version",
  "pyo3",
+]
+
+[[package]]
+name = "atlas-quota"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-core",
+ "atlas-fs",
+ "atlas-governor",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -587,6 +703,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-tuning"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-chunk",
+ "atlas-core",
+ "atlas-fs",
+ "atlas-storage",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "atlas-version"
 version = "0.1.0"
 dependencies = [
@@ -620,7 +753,10 @@ name = "atlasctl"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "atlas-backup",
+ "atlas-chaos",
  "atlas-chunk",
+ "atlas-compliance",
  "atlas-core",
  "atlas-fileprovider-mac",
  "atlas-fs",
@@ -630,9 +766,12 @@ dependencies = [
  "atlas-ingest",
  "atlas-lineage",
  "atlas-mcp",
+ "atlas-migrate",
  "atlas-object",
  "atlas-onboarding",
+ "atlas-quota",
  "atlas-shellext-win",
+ "atlas-tuning",
  "atlas-version",
  "atlas-wfsp",
  "clap",

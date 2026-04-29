@@ -1,0 +1,20 @@
+[package]
+name = "atlas-quota"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ATLAS multi-tenant quotas, isolation, and noisy-neighbour controls (T7.7)."
+
+[dependencies]
+atlas-core.workspace = true
+atlas-fs.workspace = true
+atlas-governor.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true

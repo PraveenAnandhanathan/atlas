@@ -28,6 +28,13 @@ atlas-shellext-win = { workspace = true }
 atlas-fileprovider-mac = { workspace = true }
 atlas-gvfs = { workspace = true }
 atlas-onboarding = { workspace = true }
+# Phase 7 — Production hardening
+atlas-chaos = { workspace = true }
+atlas-backup = { workspace = true }
+atlas-compliance = { workspace = true }
+atlas-tuning = { workspace = true }
+atlas-quota = { workspace = true }
+atlas-migrate = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

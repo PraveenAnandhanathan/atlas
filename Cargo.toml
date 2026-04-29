@@ -43,6 +43,14 @@ members = [
     "crates/atlas-gvfs",
     "crates/atlas-explorer-ipc",
     "crates/atlas-onboarding",
+    # Phase 7 — Production hardening
+    "crates/atlas-chaos",
+    "crates/atlas-backup",
+    "crates/atlas-auth",
+    "crates/atlas-compliance",
+    "crates/atlas-tuning",
+    "crates/atlas-quota",
+    "crates/atlas-migrate",
 ]
 
 [workspace.package]
@@ -144,6 +152,15 @@ atlas-fileprovider-mac = { path = "crates/atlas-fileprovider-mac", version = "0.
 atlas-gvfs = { path = "crates/atlas-gvfs", version = "0.1.0" }
 atlas-explorer-ipc = { path = "crates/atlas-explorer-ipc", version = "0.1.0" }
 atlas-onboarding = { path = "crates/atlas-onboarding", version = "0.1.0" }
+# Phase 7
+atlas-storage = { path = "crates/atlas-storage", version = "0.1.0" }
+atlas-chaos = { path = "crates/atlas-chaos", version = "0.1.0" }
+atlas-backup = { path = "crates/atlas-backup", version = "0.1.0" }
+atlas-auth = { path = "crates/atlas-auth", version = "0.1.0" }
+atlas-compliance = { path = "crates/atlas-compliance", version = "0.1.0" }
+atlas-tuning = { path = "crates/atlas-tuning", version = "0.1.0" }
+atlas-quota = { path = "crates/atlas-quota", version = "0.1.0" }
+atlas-migrate = { path = "crates/atlas-migrate", version = "0.1.0" }
 
 [profile.release]
 lto = "thin"
