@@ -7,6 +7,9 @@
 use anyhow::{anyhow, Context, Result};
 use atlas_core::{Author, Hash, ObjectKind};
 use atlas_fs::Fs;
+// Phase 6 — Desktop integration
+use atlas_wfsp::{WfspConfig, WfspMount};
+use atlas_onboarding::{OnboardingState, WizardStep};
 use atlas_governor::{
     policy::{AccessRequest, Permission, PolicyEngine},
     redact::{RedactConfig, RedactEngine},
@@ -203,6 +206,48 @@ enum Cmd {
         #[arg(long)]
         check_only: bool,
     },
+
+    // -----------------------------------------------------------------------
+    // Phase 6 — Desktop integration
+    // -----------------------------------------------------------------------
+    /// Mount an ATLAS store via WinFsp (Windows) or FUSE (Linux/macOS) (T6.1, T6.3, T6.5).
+    Mount {
+        /// Mount point — drive letter (Windows: `Z:`), directory, or `atlas://` URI.
+        mount_point: String,
+    },
+
+    /// Unmount a previously mounted ATLAS volume.
+    Umount {
+        /// Same mount point that was passed to `mount`.
+        mount_point: String,
+    },
+
+    /// Windows shell-extension management (T6.2).
+    #[command(subcommand)]
+    Shell(ShellCmd),
+
+    /// Run the first-launch onboarding wizard (T6.7).
+    Onboard {
+        /// Skip interactive prompts and use defaults.
+        #[arg(long)]
+        non_interactive: bool,
+        /// Store path override (wizard default: ~/atlas-store).
+        #[arg(long)]
+        store_path: Option<PathBuf>,
+    },
+
+    /// Seed sample data into an already-initialised store (T6.7).
+    SeedSamples,
+
+    /// Launch the ATLAS Explorer GUI (T6.6).
+    Explorer,
+
+    /// Start the web admin console (T6.8).
+    Web {
+        /// Address to bind.
+        #[arg(long, default_value = "127.0.0.1:8080")]
+        bind: String,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -220,6 +265,21 @@ enum McpSub {
     },
     /// List the full MCP tool catalog as JSON.
     Tools,
+}
+
+/// Phase 6: Windows shell-extension subcommands (T6.2).
+#[derive(Subcommand, Debug)]
+enum ShellCmd {
+    /// Register the ATLAS shell extension with Windows Explorer (requires admin).
+    Register {
+        /// Path to the shell-extension DLL.
+        #[arg(long, default_value = "atlas-shellext-win.dll")]
+        dll: String,
+    },
+    /// Unregister the ATLAS shell extension.
+    Unregister,
+    /// Print the registry keys the extension would write.
+    Info,
 }
 
 #[derive(Subcommand, Debug)]
@@ -420,6 +480,17 @@ fn main() -> Result<()> {
             api_keys,
             check_only,
         } => cmd_redact(&store_path, &path, email, ssn, api_keys, check_only),
+
+        // ── Phase 6 ────────────────────────────────────────────────────────
+        Cmd::Mount { mount_point } => cmd_mount(&store_path, &mount_point),
+        Cmd::Umount { mount_point } => cmd_umount(&mount_point),
+        Cmd::Shell(sub) => cmd_shell(sub),
+        Cmd::Onboard { non_interactive, store_path: override_path } => {
+            cmd_onboard(override_path.as_deref(), non_interactive)
+        }
+        Cmd::SeedSamples => cmd_seed_samples(&store_path),
+        Cmd::Explorer => cmd_explorer(),
+        Cmd::Web { bind } => cmd_web(&store_path, &bind),
     }
 }
 
@@ -1079,6 +1150,206 @@ fn cmd_redact(
         }
     } else {
         print!("{}", engine.redact(&text));
+    }
+    Ok(())
+}
+
+// ── Phase 6: Mount / Umount (T6.1, T6.3, T6.5) ──────────────────────────────
+
+fn cmd_mount(store: &std::path::Path, mount_point: &str) -> Result<()> {
+    // Validate the mount point via the WinFsp crate (cross-platform check).
+    atlas_wfsp::driver::validate_mount_point(mount_point)
+        .map_err(|e| anyhow!("invalid mount point: {e}"))?;
+
+    let fs = Fs::open(store).context("open store")?;
+    let config = WfspConfig {
+        mount_point: mount_point.to_string(),
+        ..WfspConfig::default()
+    };
+    let mount = WfspMount::new(fs, config)
+        .map_err(|e| anyhow!("mount failed: {e}"))?;
+
+    println!("Mounted ATLAS store at {mount_point}");
+    println!("Press Ctrl-C to unmount.");
+    mount.run();
+    Ok(())
+}
+
+fn cmd_umount(mount_point: &str) -> Result<()> {
+    // On Linux: fusermount -u <mount_point>.
+    // On macOS: diskutil unmount <mount_point>.
+    // On Windows: signals the WinFsp dispatcher to stop.
+    // All three call the same underlying mechanism via the driver crate.
+    println!("Unmounting {mount_point}…");
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::process::Command::new("fusermount")
+            .args(["-u", mount_point])
+            .status()
+            .context("run fusermount")?;
+        if !status.success() {
+            anyhow::bail!("fusermount -u returned non-zero");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("diskutil")
+            .args(["unmount", mount_point])
+            .status()
+            .context("run diskutil")?;
+        if !status.success() {
+            anyhow::bail!("diskutil unmount returned non-zero");
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    println!("(umount is a no-op on this platform — stop the process that called `mount`)");
+    println!("Unmounted {mount_point}");
+    Ok(())
+}
+
+// ── Phase 6: Shell extension (T6.2) ──────────────────────────────────────────
+
+fn cmd_shell(sub: ShellCmd) -> Result<()> {
+    match sub {
+        ShellCmd::Register { dll } => {
+            atlas_shellext_win::registry::register(&dll)
+                .context("shell register")?;
+            println!("Shell extension registered (DLL: {dll})");
+        }
+        ShellCmd::Unregister => {
+            atlas_shellext_win::registry::unregister()
+                .context("shell unregister")?;
+            println!("Shell extension unregistered");
+        }
+        ShellCmd::Info => {
+            println!("Column-provider CLSID : {}", atlas_shellext_win::registry::CLSID_COLUMN_PROVIDER);
+            println!("Context-menu CLSID    : {}", atlas_shellext_win::registry::CLSID_CONTEXT_MENU);
+        }
+    }
+    Ok(())
+}
+
+// ── Phase 6: Onboarding wizard (T6.7) ────────────────────────────────────────
+
+fn cmd_onboard(store_override: Option<&std::path::Path>, non_interactive: bool) -> Result<()> {
+    let mut state = OnboardingState::default();
+    if let Some(p) = store_override {
+        state.store_path = p.to_path_buf();
+    }
+
+    if non_interactive {
+        println!("Running non-interactive onboarding…");
+        println!("  Store path : {}", state.store_path.display());
+        println!("  Mode       : {:?}", state.mode);
+        // Advance through all steps until Installing.
+        while state.current_step() != &WizardStep::Installing {
+            state.next();
+        }
+        state.run_install().context("install step")?;
+        println!("Onboarding complete. Run `atlasctl explorer` to open the GUI.");
+        return Ok(());
+    }
+
+    // Interactive TUI wizard — step through prompts.
+    println!("\n{}", state.current_step().title());
+    println!("{}\n", state.current_step().description());
+
+    loop {
+        let step = state.current_step().clone();
+        match step {
+            WizardStep::Done => {
+                println!("\n✓ {}", state.current_step().title());
+                println!("{}", state.current_step().description());
+                println!("\nRun `atlasctl explorer` to open ATLAS Explorer.");
+                break;
+            }
+            WizardStep::Installing => {
+                println!("Installing to {}…", state.store_path.display());
+                state.run_install().context("install step")?;
+                println!("\n✓ {}", state.current_step().title());
+                println!("{}", state.current_step().description());
+                break;
+            }
+            _ => {
+                println!("Step {} / {} — {}", state.step_number(), state.total_steps(), step.title());
+                println!("{}\n", step.description());
+                print!("[Enter] to continue, [b] to go back: ");
+                use std::io::Write;
+                std::io::stdout().flush()?;
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if input.trim() == "b" { state.back(); } else { state.next(); }
+                println!();
+            }
+        }
+    }
+    Ok(())
+}
+
+// ── Phase 6: Seed samples (T6.7) ─────────────────────────────────────────────
+
+fn cmd_seed_samples(store: &std::path::Path) -> Result<()> {
+    atlas_onboarding::seed_sample_data(store)
+        .context("seed sample data")?;
+    println!("Sample data seeded into {}", store.display());
+    println!("  /README.md");
+    println!("  /datasets/iris.parquet");
+    println!("  /datasets/labels.jsonl");
+    println!("  /models/tiny.safetensors");
+    Ok(())
+}
+
+// ── Phase 6: Explorer launcher (T6.6) ────────────────────────────────────────
+
+fn cmd_explorer() -> Result<()> {
+    // Look for atlas-explorer on $PATH, fall back to the same directory as
+    // the current binary.
+    let exe = std::env::current_exe().ok();
+    let sibling = exe
+        .as_ref()
+        .and_then(|p| p.parent())
+        .map(|dir| dir.join("atlas-explorer"));
+
+    let binary = if sibling.as_ref().map_or(false, |p| p.exists()) {
+        sibling.unwrap()
+    } else {
+        std::path::PathBuf::from("atlas-explorer")
+    };
+
+    println!("Launching ATLAS Explorer ({})…", binary.display());
+    std::process::Command::new(&binary)
+        .spawn()
+        .with_context(|| format!("launch {}", binary.display()))?;
+    Ok(())
+}
+
+// ── Phase 6: Web admin console (T6.8) ────────────────────────────────────────
+
+fn cmd_web(store: &std::path::Path, bind: &str) -> Result<()> {
+    println!("Starting ATLAS web admin console on http://{bind}");
+    println!("  Store : {}", store.display());
+    println!("  Press Ctrl-C to stop.");
+
+    // Exec atlas-web as a sibling process.
+    let exe = std::env::current_exe().ok();
+    let sibling = exe
+        .as_ref()
+        .and_then(|p| p.parent())
+        .map(|dir| dir.join("atlas-web"));
+
+    let binary = if sibling.as_ref().map_or(false, |p| p.exists()) {
+        sibling.unwrap()
+    } else {
+        std::path::PathBuf::from("atlas-web")
+    };
+
+    let status = std::process::Command::new(&binary)
+        .args(["--bind", bind, "--store", &store.to_string_lossy()])
+        .status()
+        .with_context(|| format!("launch {}", binary.display()))?;
+
+    if !status.success() {
+        anyhow::bail!("atlas-web exited with status {status}");
     }
     Ok(())
 }

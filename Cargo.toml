@@ -36,6 +36,13 @@ members = [
     "crates/atlas-s3",
     "crates/atlas-toolwire",
     "crates/atlas-conformance",
+    # Phase 6 — Desktop integration
+    "crates/atlas-wfsp",
+    "crates/atlas-shellext-win",
+    "crates/atlas-fileprovider-mac",
+    "crates/atlas-gvfs",
+    "crates/atlas-explorer-ipc",
+    "crates/atlas-onboarding",
 ]
 
 [workspace.package]
@@ -130,6 +137,13 @@ atlas-grpc = { path = "crates/atlas-grpc", version = "0.1.0" }
 atlas-s3 = { path = "crates/atlas-s3", version = "0.1.0" }
 atlas-toolwire = { path = "crates/atlas-toolwire", version = "0.1.0" }
 atlas-conformance = { path = "crates/atlas-conformance", version = "0.1.0" }
+# Phase 6
+atlas-wfsp = { path = "crates/atlas-wfsp", version = "0.1.0" }
+atlas-shellext-win = { path = "crates/atlas-shellext-win", version = "0.1.0" }
+atlas-fileprovider-mac = { path = "crates/atlas-fileprovider-mac", version = "0.1.0" }
+atlas-gvfs = { path = "crates/atlas-gvfs", version = "0.1.0" }
+atlas-explorer-ipc = { path = "crates/atlas-explorer-ipc", version = "0.1.0" }
+atlas-onboarding = { path = "crates/atlas-onboarding", version = "0.1.0" }
 
 [profile.release]
 lto = "thin"

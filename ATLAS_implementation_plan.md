@@ -233,14 +233,14 @@ Each workstream is owned by one lead and maps to a slice of [section 15](./ATLAS
 
 ### Phase 6 — Desktop integration (M26–34)
 
-- [ ] T6.1 Windows WinFsp-based driver (`atlas-wfsp`) — drive letter + mount point
-- [ ] T6.2 `atlas-shellext-win` — columns + context menu
-- [ ] T6.3 macOS FileProvider extension (`atlas-fileprovider-mac`)
-- [ ] T6.4 Finder Sync + Quick Look generators for safetensors/parquet/embeddings
-- [ ] T6.5 `atlas-gvfs` + `atlas-kio` Linux file-manager integrations
-- [ ] T6.6 `atlas-explorer` GUI (Tauri + TypeScript) — browser, search, lineage, version, policy tabs
-- [ ] T6.7 Onboarding: installer wizards, first-mount flow, sample data
-- [ ] T6.8 `atlas-web` admin console (for Team/Scale mode)
+- [x] T6.1 Windows WinFsp-based driver (`atlas-wfsp`) — drive letter + mount point
+- [x] T6.2 `atlas-shellext-win` — columns + context menu
+- [x] T6.3 macOS FileProvider extension (`atlas-fileprovider-mac`)
+- [x] T6.4 Finder Sync + Quick Look generators for safetensors/parquet/embeddings
+- [x] T6.5 `atlas-gvfs` + `atlas-kio` Linux file-manager integrations
+- [x] T6.6 `atlas-explorer` GUI (Tauri + TypeScript) — browser, search, lineage, version, policy tabs
+- [x] T6.7 Onboarding: installer wizards, first-mount flow, sample data
+- [x] T6.8 `atlas-web` admin console (for Team/Scale mode)
 
 ### Phase 7 — Production hardening (M32–48+)
 

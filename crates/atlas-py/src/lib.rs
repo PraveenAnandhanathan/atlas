@@ -53,7 +53,7 @@ impl PyStore {
     /// Write `data` to logical path `path` (must start with '/').
     fn write(&self, path: &str, data: &[u8]) -> PyResult<()> {
         let fs = self.fs.lock().unwrap();
-        fs.write(path, data).map_err(into_pyerr)
+        fs.write(path, data).map(|_| ()).map_err(into_pyerr)
     }
 
     /// Read the bytes at `path`.

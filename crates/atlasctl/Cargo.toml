@@ -22,6 +22,12 @@ atlas-ingest = { workspace = true }
 atlas-lineage = { workspace = true }
 atlas-governor = { workspace = true }
 atlas-mcp = { workspace = true }
+# Phase 6 — Desktop integration
+atlas-wfsp = { workspace = true }
+atlas-shellext-win = { workspace = true }
+atlas-fileprovider-mac = { workspace = true }
+atlas-gvfs = { workspace = true }
+atlas-onboarding = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

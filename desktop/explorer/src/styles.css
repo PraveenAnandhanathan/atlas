@@ -1,0 +1,232 @@
+/* ATLAS Explorer — base styles (T6.6) */
+
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface2: #22263a;
+  --accent: #6366f1;
+  --accent-dim: #4f46e5;
+  --text: #e2e8f0;
+  --text-dim: #94a3b8;
+  --border: #2d3148;
+  --danger: #ef4444;
+  --success: #22c55e;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  height: 100vh;
+}
+
+/* Sidebar */
+#sidebar {
+  width: 200px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 0;
+  gap: 8px;
+}
+
+.logo {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--accent);
+  padding: 0 20px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+#tab-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  flex: 1;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab-btn:hover { background: var(--surface2); color: var(--text); }
+.tab-btn.active { background: var(--accent-dim); color: #fff; }
+
+#store-info {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+
+#open-store-btn {
+  width: 100%;
+  padding: 8px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+#open-store-btn:hover { background: var(--accent-dim); }
+
+#store-path {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  margin-top: 6px;
+  word-break: break-all;
+}
+
+/* Main content */
+#content { flex: 1; overflow-y: auto; padding: 24px; }
+
+.tab-panel.hidden { display: none; }
+
+/* Breadcrumb */
+.breadcrumb {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-bottom: 16px;
+}
+.breadcrumb span { cursor: pointer; }
+.breadcrumb span:hover { color: var(--accent); }
+
+/* File table */
+.file-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.file-table th {
+  text-align: left;
+  padding: 8px 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.file-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.file-table tr:hover td { background: var(--surface2); }
+
+.file-table tr.clickable { cursor: pointer; }
+
+.kind-dir  { color: var(--accent); }
+.kind-file { color: var(--text-dim); }
+.hash      { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-dim); }
+.size      { font-family: var(--font-mono); font-size: 0.8rem; }
+
+/* Search tab */
+.search-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.search-bar input {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.search-bar button {
+  padding: 10px 20px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.search-result {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  background: var(--surface);
+}
+
+.search-result .path { font-family: var(--font-mono); font-size: 0.8rem; color: var(--accent); }
+.search-result .snippet { font-size: 0.85rem; color: var(--text-dim); margin-top: 4px; }
+.search-result .score { font-size: 0.75rem; color: var(--text-dim); float: right; }
+
+/* Graph placeholder */
+.graph-placeholder {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 40px;
+  text-align: center;
+  color: var(--text-dim);
+  margin-top: 16px;
+}
+
+/* Version list */
+.commit-entry {
+  padding: 12px;
+  border-left: 3px solid var(--border);
+  margin-bottom: 10px;
+  padding-left: 16px;
+}
+
+.commit-entry .hash { font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent); }
+.commit-entry .message { font-size: 0.9rem; margin: 4px 0; }
+.commit-entry .meta { font-size: 0.75rem; color: var(--text-dim); }
+
+/* Policy */
+.policy-view { font-size: 0.875rem; }
+.policy-view .rule {
+  display: flex;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: var(--surface2);
+}
+.effect-allow { border-left: 3px solid var(--success); }
+.effect-deny  { border-left: 3px solid var(--danger); }
+
+/* Utility */
+.section-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+.empty-state {
+  color: var(--text-dim);
+  font-size: 0.875rem;
+  padding: 40px;
+  text-align: center;
+}
