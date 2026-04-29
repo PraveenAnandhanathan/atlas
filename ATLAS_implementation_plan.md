@@ -244,14 +244,14 @@ Each workstream is owned by one lead and maps to a slice of [section 15](./ATLAS
 
 ### Phase 7 — Production hardening (M32–48+)
 
-- [ ] T7.1 `atlas-chaos` fault-injection framework + nightly runs
-- [ ] T7.2 Backup, snapshot export, cross-region replication
-- [ ] T7.3 Enterprise auth: OIDC, SAML, SCIM
-- [ ] T7.4 SOC 2 / ISO 27001 control readiness
-- [ ] T7.5 Disaster recovery runbooks + game days
-- [ ] T7.6 Per-workload performance tuning (training, inference, build)
-- [ ] T7.7 Multi-tenant quotas, isolation, noisy-neighbor controls
-- [ ] T7.8 Long-form migration tools from S3 / GCS / ext4 / git-LFS
+- [x] T7.1 `atlas-chaos` fault-injection framework + nightly runs
+- [x] T7.2 Backup, snapshot export, cross-region replication
+- [x] T7.3 Enterprise auth: OIDC, SAML, SCIM
+- [x] T7.4 SOC 2 / ISO 27001 control readiness
+- [x] T7.5 Disaster recovery runbooks + game days
+- [x] T7.6 Per-workload performance tuning (training, inference, build)
+- [x] T7.7 Multi-tenant quotas, isolation, noisy-neighbor controls
+- [x] T7.8 Long-form migration tools from S3 / GCS / ext4 / git-LFS
 
 ---
 
