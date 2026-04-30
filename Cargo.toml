@@ -81,6 +81,12 @@ anyhow = "1"
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
 
+# Compression
+zstd = "0.13"
+
+# Concurrent data structures
+dashmap = "6"
+
 # Misc
 hex = "0.4"
 time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
@@ -124,6 +130,7 @@ rand = "0.8"
 # Internal crates, referenced by siblings
 atlas-core = { path = "crates/atlas-core", version = "0.1.0" }
 atlas-chunk = { path = "crates/atlas-chunk", version = "0.1.0" }
+atlas-gc = { path = "crates/atlas-gc", version = "0.1.0" }
 atlas-object = { path = "crates/atlas-object", version = "0.1.0" }
 atlas-meta = { path = "crates/atlas-meta", version = "0.1.0" }
 atlas-version = { path = "crates/atlas-version", version = "0.1.0" }

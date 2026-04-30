@@ -29,7 +29,7 @@ async fn chunk_and_meta_roundtrip() {
         assert!(chunks.has(&h).unwrap());
         chunks.verify(&h).unwrap();
         assert_eq!(chunks.size(&h).unwrap(), 11);
-        assert_eq!(chunks.iter_hashes().unwrap().len(), 1);
+        assert_eq!(chunks.iter_hashes().count(), 1);
 
         let meta = RemoteMetaStore::connect(endpoint).unwrap();
         let cfg = StoreConfig::new();

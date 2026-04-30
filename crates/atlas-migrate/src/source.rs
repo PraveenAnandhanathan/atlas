@@ -68,6 +68,28 @@ pub fn parse_source(uri: &str) -> Result<MigrationSource, String> {
     Err(format!("unrecognised source URI: {uri}"))
 }
 
+/// Fetch the raw bytes of a single object from the source.
+///
+/// - `Ext4`: reads the file directly from the mounted filesystem.
+/// - Cloud sources: network calls are not yet wired; returns `Err`.
+pub fn fetch_object(source: &MigrationSource, obj: &SourceObject) -> Result<Vec<u8>, String> {
+    match source {
+        MigrationSource::Ext4 { mount_point, .. } => {
+            let full = format!("{}/{}", mount_point.trim_end_matches('/'), obj.path.trim_start_matches('/'));
+            std::fs::read(&full).map_err(|e| format!("read {full}: {e}"))
+        }
+        MigrationSource::S3 { endpoint, bucket, .. } => Err(format!(
+            "S3 network transfer not yet wired (endpoint={endpoint}, bucket={bucket})"
+        )),
+        MigrationSource::Gcs { bucket, .. } => Err(format!(
+            "GCS network transfer not yet wired (bucket={bucket})"
+        )),
+        MigrationSource::GitLfs { repo_url, .. } => Err(format!(
+            "git-LFS transfer not yet wired (repo={repo_url})"
+        )),
+    }
+}
+
 /// A single object discovered in the source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceObject {
@@ -78,16 +100,40 @@ pub struct SourceObject {
     pub source_id: String,
 }
 
-/// Enumerate objects available at the source (stub).
+/// Enumerate objects available at the source.
+///
+/// For `Ext4` sources, performs a real recursive directory walk.
+/// For cloud sources (S3, GCS, git-LFS), returns a stub list because
+/// the network clients are not yet wired.
 pub fn enumerate(source: &MigrationSource, limit: usize) -> Vec<SourceObject> {
-    // In production: call S3 ListObjectsV2, GCS Objects.list, `find`, or
-    // `git lfs ls-files` and stream results.
-    let prefix = match source {
-        MigrationSource::S3 { prefix, .. } => prefix.clone(),
-        MigrationSource::Gcs { prefix, .. } => prefix.clone(),
-        MigrationSource::Ext4 { sub_path, .. } => sub_path.clone(),
-        MigrationSource::GitLfs { ref_name, .. } => format!("lfs-{ref_name}"),
-    };
+    match source {
+        MigrationSource::Ext4 { mount_point, sub_path } => {
+            let root = format!("{}/{}", mount_point.trim_end_matches('/'), sub_path.trim_start_matches('/'));
+            enumerate_ext4(&root, limit)
+        }
+        MigrationSource::S3 { prefix, .. } => stub_objects(prefix, limit),
+        MigrationSource::Gcs { prefix, .. } => stub_objects(prefix, limit),
+        MigrationSource::GitLfs { ref_name, .. } => stub_objects(&format!("lfs-{ref_name}"), limit),
+    }
+}
+
+fn enumerate_ext4(root: &str, limit: usize) -> Vec<SourceObject> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(root) else { return out; };
+    for entry in rd.flatten().take(limit) {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() { continue; }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        out.push(SourceObject {
+            path: name.clone(),
+            size: meta.len(),
+            source_id: name,
+        });
+    }
+    out
+}
+
+fn stub_objects(prefix: &str, limit: usize) -> Vec<SourceObject> {
     (0..limit.min(3))
         .map(|i| SourceObject {
             path: format!("{prefix}/object-{i}.bin"),

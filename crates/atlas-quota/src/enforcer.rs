@@ -1,6 +1,6 @@
 //! Quota enforcement and noisy-neighbour controls (T7.7).
 
-use crate::quota::{Quota, Usage};
+use crate::quota::Usage;
 use crate::tenant::TenantRegistry;
 
 /// Decision returned by the enforcer.

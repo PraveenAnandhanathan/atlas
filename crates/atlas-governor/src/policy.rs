@@ -155,7 +155,25 @@ impl PolicyEngine {
     }
 
     pub fn load_yaml_file(&mut self, path: impl AsRef<Path>) -> Result<()> {
-        self.policies.push(Policy::load(path)?);
+        const MAX_YAML_BYTES: u64 = 1024 * 1024; // 1 MiB
+        const MAX_RULES: usize = 10_000;
+
+        let path = path.as_ref();
+        let meta = std::fs::metadata(path)?;
+        if meta.len() > MAX_YAML_BYTES {
+            return Err(crate::GovernorError::Policy(format!(
+                "policy file too large: {} bytes (limit {MAX_YAML_BYTES})",
+                meta.len()
+            )));
+        }
+        let policy = Policy::load(path)?;
+        if policy.rules.len() > MAX_RULES {
+            return Err(crate::GovernorError::Policy(format!(
+                "too many rules: {} (limit {MAX_RULES})",
+                policy.rules.len()
+            )));
+        }
+        self.policies.push(policy);
         Ok(())
     }
 

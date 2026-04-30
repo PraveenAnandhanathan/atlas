@@ -54,7 +54,7 @@ impl CapabilityToken {
     }
 
     pub fn is_expired(&self) -> bool {
-        now_secs() > self.expires_at
+        now_secs() > self.expires_at.saturating_add(CLOCK_LEEWAY_SECS)
     }
 
     /// Returns true if this token covers `path` with `permission`.
@@ -190,6 +190,9 @@ impl TokenAuthority {
         hex::encode(self.key.verifying_key().to_bytes())
     }
 }
+
+/// Seconds of clock skew to tolerate between token issuer and verifier.
+const CLOCK_LEEWAY_SECS: u64 = 30;
 
 fn now_secs() -> u64 {
     std::time::SystemTime::now()

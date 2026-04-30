@@ -62,6 +62,9 @@ pub struct TokenClaims {
     pub aud: String,
 }
 
+/// Seconds of clock skew to tolerate between the ATLAS server and the IdP.
+const CLOCK_LEEWAY_SECS: u64 = 30;
+
 impl TokenClaims {
     /// The ATLAS principal derived from this token.
     pub fn atlas_principal(&self, config: &OidcConfig) -> String {
@@ -77,7 +80,7 @@ impl TokenClaims {
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        now >= self.exp
+        now > self.exp.saturating_add(CLOCK_LEEWAY_SECS)
     }
 }
 

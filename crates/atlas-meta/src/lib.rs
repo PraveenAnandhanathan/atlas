@@ -10,6 +10,8 @@
 pub mod keys;
 pub mod sled_store;
 pub mod store;
+pub mod versioned;
 
 pub use sled_store::SledStore;
 pub use store::{MetaStore, Transaction, TxOpExternal};
+pub use versioned::{decode as decode_versioned, encode as encode_versioned};

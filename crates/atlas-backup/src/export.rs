@@ -3,7 +3,7 @@
 use atlas_core::Hash;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Configuration for a snapshot export.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,8 +142,12 @@ impl<W: Write> BundleWriter<W> {
 }
 
 fn zstd_compress(data: &[u8]) -> Vec<u8> {
-    // Real implementation uses the `zstd` crate; stub returns a copy.
-    data.to_vec()
+    zstd::bulk::compress(data, 3).unwrap_or_else(|_| data.to_vec())
+}
+
+pub fn zstd_decompress(data: &[u8]) -> anyhow::Result<Vec<u8>> {
+    zstd::bulk::decompress(data, 64 * 1024 * 1024)
+        .map_err(|e| anyhow::anyhow!("zstd decompress: {e}"))
 }
 
 fn now_ms() -> u64 {
@@ -156,6 +160,15 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zstd_compress_decompress_roundtrip() {
+        let data = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".repeat(100);
+        let compressed = zstd_compress(&data);
+        assert!(compressed.len() < data.len(), "zstd should compress repetitive data");
+        let decompressed = zstd_decompress(&compressed).unwrap();
+        assert_eq!(decompressed, data);
+    }
 
     #[test]
     fn bundle_writer_header_magic() {

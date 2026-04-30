@@ -21,8 +21,15 @@ use atlas_object::{
     codec::seal, Branch, BranchProtection, ChunkRef, Commit, DirEntry, DirectoryManifest,
     FileManifest, HeadState, RefRecord, StoreConfig,
 };
+use dashmap::DashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+/// Hook called before every mutating operation.
+/// Implementations return `Err` to block the operation (e.g. quota exceeded).
+pub trait WriteHook: Send + Sync {
+    fn before_write(&self, path: &str, bytes_len: u64) -> Result<()>;
+}
 
 /// Publicly visible metadata about a file or directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,11 +43,25 @@ pub struct Entry {
 /// The filesystem engine.
 ///
 /// Cheap to clone — the underlying stores are in [`Arc`].
+///
+/// A single `write_gate` mutex serialises all mutations (write, delete,
+/// rename, mkdir) so concurrent callers cannot produce a split-brain
+/// working root. Reads (stat, list, read) never acquire the gate.
+///
+/// `dir_cache` is a content-addressed cache of decoded `DirectoryManifest`
+/// values keyed by hash. Because manifests are immutable once sealed, entries
+/// are never invalidated — new mutations produce new hashes and new entries.
 #[derive(Clone)]
 pub struct Fs {
     pub(crate) chunks: Arc<dyn ChunkStore>,
     pub(crate) meta: Arc<dyn MetaStore>,
     pub(crate) root_dir: PathBuf,
+    /// Serialises all working-root mutations. (P0-1)
+    write_gate: Arc<Mutex<()>>,
+    /// Optional pre-write hook (quota enforcement, rate limiting). (P0-2)
+    write_hook: Option<Arc<dyn WriteHook>>,
+    /// In-process cache of decoded directory manifests (P2-1).
+    dir_cache: Arc<DashMap<Hash, DirectoryManifest>>,
 }
 
 impl Fs {
@@ -123,7 +144,17 @@ impl Fs {
             chunks: Arc::new(chunks),
             meta: Arc::new(meta),
             root_dir: root.to_path_buf(),
+            write_gate: Arc::new(Mutex::new(())),
+            write_hook: None,
+            dir_cache: Arc::new(DashMap::new()),
         })
+    }
+
+    /// Attach a write hook (e.g. quota enforcer) to this `Fs` instance.
+    /// Returns a new clone with the hook set; the original is unchanged.
+    pub fn with_write_hook(mut self, hook: Arc<dyn WriteHook>) -> Self {
+        self.write_hook = Some(hook);
+        self
     }
 
     /// The directory this store lives in on disk.
@@ -211,6 +242,15 @@ impl Fs {
             return Err(Error::BadPath(format!("cannot write root: {path}")));
         }
 
+        // P0-2: quota / rate-limit hook
+        if let Some(hook) = &self.write_hook {
+            hook.before_write(&path, bytes.len() as u64)?;
+        }
+
+        // P0-1: serialise all mutations through the write gate
+        let _gate = self.write_gate.lock()
+            .map_err(|_| Error::Internal("write-gate mutex poisoned".into()))?;
+
         let blob_hash = self.write_blob(bytes)?;
 
         let mut file = FileManifest {
@@ -253,6 +293,8 @@ impl Fs {
             return Err(Error::Invalid("cannot delete root".into()));
         }
         let (parent, name) = parent_and_name(&path)?;
+        let _gate = self.write_gate.lock()
+            .map_err(|_| Error::Internal("write-gate mutex poisoned".into()))?;
 
         let (target_hash, target_kind) = self.resolve(&path)?;
         if target_kind == ObjectKind::Dir {
@@ -279,6 +321,8 @@ impl Fs {
         if from == to {
             return Ok(());
         }
+        let _gate = self.write_gate.lock()
+            .map_err(|_| Error::Internal("write-gate mutex poisoned".into()))?;
         let (from_parent, from_name) = parent_and_name(&from)?;
         let (to_parent, to_name) = parent_and_name(&to)?;
 
@@ -312,6 +356,8 @@ impl Fs {
         if path == "/" {
             return Ok(());
         }
+        let _gate = self.write_gate.lock()
+            .map_err(|_| Error::Internal("write-gate mutex poisoned".into()))?;
         if let Ok((_h, k)) = self.resolve(&path) {
             if k == ObjectKind::Dir {
                 return Ok(());
@@ -387,9 +433,15 @@ impl Fs {
     }
 
     fn load_dir(&self, h: &Hash) -> Result<DirectoryManifest> {
-        self.meta
+        if let Some(cached) = self.dir_cache.get(h) {
+            return Ok(cached.clone());
+        }
+        let dir = self
+            .meta
             .get_dir_manifest(h)?
-            .ok_or_else(|| Error::NotFound(format!("dir manifest {}", h.short())))
+            .ok_or_else(|| Error::NotFound(format!("dir manifest {}", h.short())))?;
+        self.dir_cache.insert(*h, dir.clone());
+        Ok(dir)
     }
 
     fn load_file(&self, h: &Hash) -> Result<FileManifest> {
@@ -441,6 +493,7 @@ impl Fs {
             dir.hash = Hash::ZERO;
             let (h, _) = seal(&mut dir)?;
             self.meta.put_dir_manifest(&dir)?;
+            self.dir_cache.insert(h, dir);
             return Ok(h);
         }
         let head = &parts[0];
@@ -476,6 +529,7 @@ impl Fs {
         dir.hash = Hash::ZERO;
         let (h, _) = seal(&mut dir)?;
         self.meta.put_dir_manifest(&dir)?;
+        self.dir_cache.insert(h, dir);
         Ok(h)
     }
 
@@ -488,6 +542,7 @@ impl Fs {
         };
         let (h, _) = seal(&mut empty)?;
         self.meta.put_dir_manifest(&empty)?;
+        self.dir_cache.insert(h, empty);
         Ok(h)
     }
 }
@@ -620,9 +675,9 @@ mod tests {
         let (_d, fs) = tmp_fs();
         let payload = vec![42u8; 1_000_000];
         fs.write("/a", &payload).unwrap();
-        let n_after_first = fs.chunks.iter_hashes().unwrap().len();
+        let n_after_first = fs.chunks.iter_hashes().count();
         fs.write("/b", &payload).unwrap();
-        let n_after_second = fs.chunks.iter_hashes().unwrap().len();
+        let n_after_second = fs.chunks.iter_hashes().count();
         assert_eq!(n_after_first, n_after_second, "identical bytes must dedup");
     }
 
@@ -634,6 +689,40 @@ mod tests {
         fs.write("/m", b"3").unwrap();
         let listing: Vec<String> = fs.list("/").unwrap().into_iter().map(|e| e.path).collect();
         assert_eq!(listing, vec!["/a", "/m", "/z"]);
+    }
+
+    #[test]
+    fn concurrent_writes_all_visible() {
+        let (_d, fs) = tmp_fs();
+        let fs = Arc::new(fs);
+        let mut handles = Vec::new();
+        for i in 0..8u8 {
+            let fs2 = Arc::clone(&fs);
+            handles.push(std::thread::spawn(move || {
+                fs2.write(&format!("/file-{i}"), &[i; 128]).unwrap();
+            }));
+        }
+        for h in handles { h.join().unwrap(); }
+        let entries = fs.list("/").unwrap();
+        assert_eq!(entries.len(), 8, "all 8 concurrent writes must be visible");
+    }
+
+    #[test]
+    fn write_hook_blocks_oversized_write() {
+        struct SizeLimit(u64);
+        impl WriteHook for SizeLimit {
+            fn before_write(&self, _path: &str, bytes_len: u64) -> Result<()> {
+                if bytes_len > self.0 {
+                    Err(Error::PermissionDenied("quota exceeded".into()))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        let (_d, fs) = tmp_fs();
+        let fs = fs.with_write_hook(Arc::new(SizeLimit(10)));
+        assert!(fs.write("/big", &[0u8; 100]).is_err());
+        assert!(fs.write("/small", &[0u8; 5]).is_ok());
     }
 
     #[test]

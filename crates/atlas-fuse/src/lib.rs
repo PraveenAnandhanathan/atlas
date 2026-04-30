@@ -88,24 +88,24 @@ mod imp {
             }
         }
 
-        fn intern(&self, path: &str) -> u64 {
-            let mut p2i = self.path_to_ino.lock().unwrap();
+        /// Intern `path` → inode, allocating a fresh inode if needed.
+        /// Returns `None` if a mutex is poisoned (mount stays alive; caller
+        /// replies `EIO` to the kernel).
+        fn intern(&self, path: &str) -> Option<u64> {
+            let mut p2i = self.path_to_ino.lock().ok()?;
             if let Some(&ino) = p2i.get(path) {
-                return ino;
+                return Some(ino);
             }
-            let mut next = self.next_ino.lock().unwrap();
+            let mut next = self.next_ino.lock().ok()?;
             let ino = *next;
             *next += 1;
             p2i.insert(path.to_string(), ino);
-            self.ino_to_path
-                .lock()
-                .unwrap()
-                .insert(ino, path.to_string());
-            ino
+            self.ino_to_path.lock().ok()?.insert(ino, path.to_string());
+            Some(ino)
         }
 
         fn path_of(&self, ino: u64) -> Option<String> {
-            self.ino_to_path.lock().unwrap().get(&ino).cloned()
+            self.ino_to_path.lock().ok()?.get(&ino).cloned()
         }
 
         fn attr_for(&self, ino: u64, path: &str) -> Option<FileAttr> {
@@ -158,7 +158,10 @@ mod imp {
                 return;
             };
             let path = join(&parent_path, name);
-            let ino = self.intern(&path);
+            let Some(ino) = self.intern(&path) else {
+                reply.error(libc::EIO);
+                return;
+            };
             match self.attr_for(ino, &path) {
                 Some(attr) => reply.entry(&TTL, &attr, 0),
                 None => reply.error(libc::ENOENT),
@@ -232,7 +235,10 @@ mod imp {
                 // `Entry::path` is the absolute logical path; for readdir we
                 // need only the basename.
                 let name = e.path.rsplit('/').next().unwrap_or(&e.path).to_string();
-                let child_ino = self.intern(&e.path);
+                let child_ino = match self.intern(&e.path) {
+                    Some(i) => i,
+                    None => { reply.error(libc::EIO); return; }
+                };
                 let kind = match e.kind {
                     ObjectKind::Dir => FileType::Directory,
                     _ => FileType::RegularFile,

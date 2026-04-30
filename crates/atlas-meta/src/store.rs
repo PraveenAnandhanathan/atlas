@@ -1,12 +1,14 @@
 //! [`MetaStore`] trait — the single dependency the rest of ATLAS has
 //! on a metadata backend.
 
-use atlas_core::{Error, Hash, Result};
+use atlas_core::{Hash, Result};
 use atlas_object::{
     BlobManifest, Branch, Commit, DirectoryManifest, FileManifest, HeadState, RefRecord,
     StoreConfig,
 };
 use serde::{de::DeserializeOwned, Serialize};
+
+use crate::versioned::{decode as decode_versioned, encode as encode_versioned};
 
 /// A small batch of writes that commit atomically.
 ///
@@ -43,7 +45,7 @@ impl Transaction {
     }
 
     pub fn put<T: Serialize>(&mut self, key: String, value: &T) -> Result<()> {
-        let bytes = bincode::serialize(value).map_err(|e| Error::Serde(e.to_string()))?;
+        let bytes = encode_versioned(value)?;
         self.put_raw(key, bytes);
         Ok(())
     }
@@ -85,10 +87,7 @@ pub trait MetaStore: Send + Sync {
         Self: Sized,
     {
         match self.get_raw(key)? {
-            Some(bytes) => {
-                let v = bincode::deserialize(&bytes).map_err(|e| Error::Serde(e.to_string()))?;
-                Ok(Some(v))
-            }
+            Some(bytes) => Ok(Some(decode_versioned(&bytes)?)),
             None => Ok(None),
         }
     }
@@ -97,14 +96,14 @@ pub trait MetaStore: Send + Sync {
     where
         Self: Sized,
     {
-        let bytes = bincode::serialize(value).map_err(|e| Error::Serde(e.to_string()))?;
+        let bytes = encode_versioned(value)?;
         self.put_raw(key, &bytes)
     }
 
     // -- Domain helpers ----------------------------------------------
     //
     // These take concrete types so they remain dyn-callable. Each one
-    // hits get_raw/put_raw and does its own bincode encode/decode.
+    // hits get_raw/put_raw with versioned bincode encoding.
 
     fn get_blob_manifest(&self, hash: &Hash) -> Result<Option<BlobManifest>> {
         decode_opt(self.get_raw(&crate::keys::object(hash))?)
@@ -168,8 +167,7 @@ pub trait MetaStore: Send + Sync {
         let entries = self.scan_prefix(crate::keys::branch_prefix())?;
         let mut out = Vec::with_capacity(entries.len());
         for (_, bytes) in entries {
-            let b: Branch =
-                bincode::deserialize(&bytes).map_err(|e| Error::Serde(e.to_string()))?;
+            let b: Branch = decode_versioned(&bytes)?;
             out.push(b);
         }
         Ok(out)
@@ -195,15 +193,12 @@ pub trait MetaStore: Send + Sync {
 }
 
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    bincode::serialize(value).map_err(|e| Error::Serde(e.to_string()))
+    encode_versioned(value)
 }
 
 fn decode_opt<T: DeserializeOwned>(bytes: Option<Vec<u8>>) -> Result<Option<T>> {
     match bytes {
-        Some(b) => {
-            let v = bincode::deserialize(&b).map_err(|e| Error::Serde(e.to_string()))?;
-            Ok(Some(v))
-        }
+        Some(b) => Ok(Some(decode_versioned(&b)?)),
         None => Ok(None),
     }
 }
