@@ -9,6 +9,32 @@ use tantivy::query::QueryParser;
 use tantivy::schema::{Field, Schema, TextFieldIndexing, TextOptions, FAST, STORED, STRING};
 use tantivy::{Index, IndexWriter, ReloadPolicy, TantivyDocument};
 
+/// Extract the first string value of a stored field.
+fn str_field<'a>(doc: &'a TantivyDocument, field: Field) -> Option<&'a str> {
+    doc.get_first(field).and_then(|v| {
+        if let tantivy::schema::OwnedValue::Str(s) = v {
+            Some(s.as_str())
+        } else {
+            None
+        }
+    })
+}
+
+/// Strip simple HTML tags (e.g. `<b>`, `</b>`) from a snippet string.
+fn strip_html_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for ch in s.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
 pub struct TextIndex {
     index: Index,
     writer: IndexWriter,
@@ -104,6 +130,8 @@ impl TextIndex {
     }
 
     pub fn search(&self, query_str: &str, limit: usize) -> Result<Vec<SearchResult>> {
+        use tantivy::snippet::SnippetGenerator;
+
         let reader = self
             .index
             .reader_builder()
@@ -118,49 +146,38 @@ impl TextIndex {
 
         let top_docs = searcher.search(&query, &TopDocs::with_limit(limit))?;
 
+        // Build a snippet generator once per search — it analyses the query
+        // against the `text` field and extracts the best matching excerpt.
+        let snippet_gen =
+            SnippetGenerator::create(&searcher, &*query, self.schema.text).ok();
+
         let mut results = Vec::with_capacity(top_docs.len());
         for (score, addr) in top_docs {
             let retrieved: TantivyDocument = searcher.doc(addr)?;
-            let hash_hex = retrieved
-                .get_first(self.schema.hash_hex)
-                .and_then(|v| {
-                    if let tantivy::schema::OwnedValue::Str(s) = v {
-                        Some(s.as_str())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_default();
-            let path = retrieved
-                .get_first(self.schema.path)
-                .and_then(|v| {
-                    if let tantivy::schema::OwnedValue::Str(s) = v {
-                        Some(s.as_str())
-                    } else {
-                        None
-                    }
-                })
+
+            let hash_hex = str_field(&retrieved, self.schema.hash_hex).unwrap_or_default();
+            let path = str_field(&retrieved, self.schema.path)
                 .unwrap_or_default()
                 .to_string();
-            let xattrs_json = retrieved
-                .get_first(self.schema.xattrs_json)
-                .and_then(|v| {
-                    if let tantivy::schema::OwnedValue::Str(s) = v {
-                        Some(s.as_str())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or("{}");
+            let xattrs_json =
+                str_field(&retrieved, self.schema.xattrs_json).unwrap_or("{}");
             let xattrs: HashMap<String, String> =
                 serde_json::from_str(xattrs_json).unwrap_or_default();
+
+            // Generate a context-rich snippet with matched terms highlighted.
+            let snippet = snippet_gen.as_ref().map(|gen| {
+                let s = gen.snippet_from_doc(&retrieved);
+                // `to_html()` wraps matched terms in <b>…</b>; strip the tags
+                // so callers get plain text they can display however they want.
+                strip_html_tags(&s.to_html())
+            });
 
             let file_hash = Hash::from_hex(hash_hex).unwrap_or(Hash::ZERO);
             results.push(SearchResult {
                 file_hash,
                 path,
                 score,
-                snippet: None,
+                snippet,
                 xattrs,
             });
         }

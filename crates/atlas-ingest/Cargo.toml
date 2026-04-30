@@ -16,6 +16,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 reqwest = { workspace = true }
+zip = { workspace = true }
+quick-xml = { workspace = true }
 
 [dev-dependencies]
 atlas-fs = { workspace = true }
