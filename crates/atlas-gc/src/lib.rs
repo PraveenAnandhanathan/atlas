@@ -51,9 +51,9 @@ pub fn mark_sweep(
     report.manifests_visited = visited_manifests.len();
     report.chunks_marked = reachable.len();
 
-    let on_disk = chunks.iter_hashes()?;
-    report.chunks_seen = on_disk.len();
-    for h in on_disk {
+    for h_result in chunks.iter_hashes() {
+        let h = h_result?;
+        report.chunks_seen += 1;
         if !reachable.contains(&h) {
             if !dry_run {
                 if let Err(e) = chunks.delete(&h) {
@@ -195,7 +195,7 @@ impl<'a> Refcounts<'a> {
     /// Sweep chunks whose refcount is zero. Returns count deleted.
     pub fn sweep_zero(&self, chunks: &dyn ChunkStore) -> Result<usize> {
         let mut count = 0;
-        for h in chunks.iter_hashes()? {
+        for h in chunks.iter_hashes().filter_map(|r| r.ok()) {
             if self.get(&h)? == 0 {
                 if let Err(e) = chunks.delete(&h) {
                     if !matches!(e, Error::NotFound(_)) {

@@ -11,5 +11,5 @@
 pub mod engine;
 pub mod path;
 
-pub use engine::{Entry, Fs};
+pub use engine::{Entry, Fs, WriteHook};
 pub use path::{normalize_path, split_path};

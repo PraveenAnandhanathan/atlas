@@ -32,6 +32,15 @@ pub enum Error {
 
     #[error("backend error: {0}")]
     Backend(String),
+
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
+
+    #[error("unsupported format version: {0}")]
+    UnsupportedVersion(u8),
+
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
 impl From<bincode::Error> for Error {

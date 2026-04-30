@@ -1,6 +1,7 @@
 //! Migration pipeline — transfers objects from a source into ATLAS (T7.8).
 
-use crate::source::{enumerate, MigrationSource, SourceObject};
+use crate::source::{enumerate, fetch_object, MigrationSource, SourceObject};
+use atlas_fs::Fs;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for a migration run.
@@ -79,16 +80,19 @@ impl MigrationStats {
     }
 }
 
-/// Run a migration (stub implementation — real version would stream objects in
-/// parallel workers, content-address chunks via `atlas_chunk`, and commit via
-/// `atlas_fs::Fs::write()`).
-pub fn run(config: &MigrationConfig) -> (Vec<TransferResult>, MigrationStats) {
+/// Run a migration, writing every transferred object into `fs`.
+///
+/// For `Ext4` sources this performs real file I/O. For cloud sources
+/// (`S3`, `GCS`, `git-lfs`) `fetch_object` returns an error because the
+/// network clients are not yet wired; those objects are recorded as failed
+/// rather than silently skipped.
+pub fn run(config: &MigrationConfig, fs: &Fs) -> (Vec<TransferResult>, MigrationStats) {
     let objects = enumerate(&config.source, 1_000);
     let mut results = Vec::with_capacity(objects.len());
     let mut stats = MigrationStats::default();
 
     for obj in &objects {
-        let r = TransferResult::ok(obj);
+        let r = transfer_one(config, fs, obj);
         stats.record(&r);
         results.push(r);
     }
@@ -96,13 +100,63 @@ pub fn run(config: &MigrationConfig) -> (Vec<TransferResult>, MigrationStats) {
     (results, stats)
 }
 
+fn transfer_one(config: &MigrationConfig, fs: &Fs, obj: &SourceObject) -> TransferResult {
+    let atlas_path = format!("/{}/{}", config.target_volume, obj.path.trim_start_matches('/'));
+
+    if config.skip_existing {
+        if let Ok(_) = fs.stat(&atlas_path) {
+            return TransferResult::skipped(obj);
+        }
+    }
+
+    let bytes = match fetch_object(&config.source, obj) {
+        Ok(b) => b,
+        Err(e) => return TransferResult::failed(obj, e),
+    };
+
+    match fs.write(&atlas_path, &bytes) {
+        Ok(_) => TransferResult::ok(obj),
+        Err(e) => TransferResult::failed(obj, e.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::source::parse_source;
 
+    fn tmp_fs() -> (tempfile::TempDir, Fs) {
+        let dir = tempfile::tempdir().unwrap();
+        let fs = Fs::init(dir.path()).unwrap();
+        (dir, fs)
+    }
+
     #[test]
-    fn migration_run_succeeds() {
+    fn migration_ext4_transfers_real_files() {
+        let src_dir = tempfile::tempdir().unwrap();
+        std::fs::write(src_dir.path().join("file-0.bin"), b"data-0").unwrap();
+        std::fs::write(src_dir.path().join("file-1.bin"), b"data-1").unwrap();
+        std::fs::write(src_dir.path().join("file-2.bin"), b"data-2").unwrap();
+
+        let (_dst, fs) = tmp_fs();
+        let config = MigrationConfig {
+            source: MigrationSource::Ext4 {
+                mount_point: src_dir.path().to_string_lossy().into(),
+                sub_path: "/".into(),
+            },
+            target_volume: "vol-1".into(),
+            concurrency: 1,
+            skip_existing: false,
+            verify: true,
+        };
+        let (_results, stats) = run(&config, &fs);
+        assert!(stats.objects_total > 0);
+        assert_eq!(stats.objects_failed, 0);
+    }
+
+    #[test]
+    fn migration_s3_records_failures_not_silent_success() {
+        let (_dst, fs) = tmp_fs();
         let config = MigrationConfig {
             source: parse_source("s3://bucket/prefix").unwrap(),
             target_volume: "vol-1".into(),
@@ -110,10 +164,10 @@ mod tests {
             skip_existing: false,
             verify: true,
         };
-        let (_results, stats) = run(&config);
+        let (_results, stats) = run(&config, &fs);
+        // S3 fetch is not yet wired — all objects should fail, not silently succeed
         assert!(stats.objects_total > 0);
-        assert_eq!(stats.objects_failed, 0);
-        assert!((stats.success_rate() - 1.0).abs() < 1e-9);
+        assert!(stats.objects_failed > 0);
     }
 
     #[test]

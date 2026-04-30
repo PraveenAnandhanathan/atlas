@@ -74,12 +74,13 @@ impl ChunkStore for RemoteChunkStore {
         }
     }
 
-    fn iter_hashes(&self) -> Result<Vec<Hash>> {
-        match self.call(ChunkRequest::IterHashes)? {
-            ChunkResponse::IterHashes { hashes } => Ok(hashes),
-            other => Err(Error::Backend(format!(
+    fn iter_hashes(&self) -> Box<dyn Iterator<Item = Result<Hash>> + '_> {
+        match self.call(ChunkRequest::IterHashes) {
+            Ok(ChunkResponse::IterHashes { hashes }) => Box::new(hashes.into_iter().map(Ok)),
+            Ok(other) => Box::new(std::iter::once(Err(Error::Backend(format!(
                 "expected IterHashes, got {other:?}"
-            ))),
+            ))))),
+            Err(e) => Box::new(std::iter::once(Err(e))),
         }
     }
 }

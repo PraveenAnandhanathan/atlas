@@ -88,7 +88,7 @@ impl ChunkStore for FlakyChunkStore {
         self.inner.size(hash)
     }
 
-    fn iter_hashes(&self) -> Result<Vec<Hash>> {
+    fn iter_hashes(&self) -> Box<dyn Iterator<Item = Result<Hash>> + '_> {
         self.inner.iter_hashes()
     }
 }

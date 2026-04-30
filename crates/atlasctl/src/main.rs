@@ -877,10 +877,11 @@ fn cmd_verify(store: &std::path::Path) -> Result<()> {
     let fs = Fs::open(store)?;
     use atlas_chunk::ChunkStore;
     let chunks = atlas_chunk::LocalChunkStore::open(store.join("chunks"))?;
-    let hashes = chunks.iter_hashes()?;
-    let n = hashes.len();
+    let mut n = 0usize;
     let mut failures = 0usize;
-    for h in hashes {
+    for h_result in chunks.iter_hashes() {
+        let h = h_result?;
+        n += 1;
         if let Err(e) = chunks.verify(&h) {
             failures += 1;
             eprintln!("FAIL {h}: {e}");
@@ -1660,8 +1661,10 @@ fn cmd_migrate(sub: MigrateCmd) -> Result<()> {
         MigrateCmd::Run { source, volume, concurrency } => {
             let src = parse_source(&source).map_err(|e| anyhow!(e))?;
             println!("Migrating from {} → volume '{volume}'…", src.kind());
+            let fs = Fs::open(".atlas").or_else(|_| Fs::init(".atlas"))
+                .map_err(|e| anyhow!("open store: {e}"))?;
             let config = MigrationConfig { source: src, target_volume: volume, concurrency, skip_existing: true, verify: true };
-            let (_results, stats) = run(&config);
+            let (_results, stats) = run(&config, &fs);
             println!("Done: {} transferred, {} skipped, {} failed ({:.1}% success)",
                 stats.objects_transferred, stats.objects_skipped, stats.objects_failed,
                 stats.success_rate() * 100.0);

@@ -28,7 +28,7 @@ pub fn handle_chunk(store: &dyn ChunkStore, req: ChunkRequest) -> Result<ChunkRe
             bytes: store.size(&hash)?,
         },
         ChunkRequest::IterHashes => ChunkResponse::IterHashes {
-            hashes: store.iter_hashes()?,
+            hashes: store.iter_hashes().collect::<atlas_core::Result<Vec<_>>>()?,
         },
     })
 }

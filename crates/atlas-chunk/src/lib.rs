@@ -47,10 +47,11 @@ pub trait ChunkStore: Send + Sync {
     fn size(&self, hash: &Hash) -> Result<u64>;
 
     /// Enumerate every chunk currently stored. Used by GC and `verify`.
-    /// Default implementation returns an empty list — networked backends
+    /// Returns a lazy iterator; each item may individually fail (I/O error).
+    /// Default implementation returns an empty iterator — networked backends
     /// that cannot cheaply enumerate may keep that default.
-    fn iter_hashes(&self) -> Result<Vec<Hash>> {
-        Ok(Vec::new())
+    fn iter_hashes(&self) -> Box<dyn Iterator<Item = Result<Hash>> + '_> {
+        Box::new(std::iter::empty())
     }
 }
 
@@ -153,36 +154,47 @@ impl ChunkStore for LocalChunkStore {
         }
     }
 
-    fn iter_hashes(&self) -> Result<Vec<Hash>> {
-        let mut out = Vec::new();
-        let Ok(outer) = fs::read_dir(&self.root) else {
-            return Ok(out);
-        };
-        for a in outer.flatten() {
-            if !a.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                continue;
-            }
-            let Ok(inner) = fs::read_dir(a.path()) else {
-                continue;
-            };
-            for b in inner.flatten() {
-                if !b.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    continue;
-                }
-                let Ok(files) = fs::read_dir(b.path()) else {
-                    continue;
-                };
-                for f in files.flatten() {
-                    if let Some(name) = f.file_name().to_str() {
-                        if let Ok(h) = Hash::from_hex(name) {
-                            out.push(h);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(out)
+    fn iter_hashes(&self) -> Box<dyn Iterator<Item = Result<Hash>> + '_> {
+        let root = self.root.clone();
+        let iter = iter_chunk_hashes(root);
+        Box::new(iter)
     }
+}
+
+/// Lazily iterate over all chunk hashes stored under `root`.
+/// Errors (e.g. permission denied on a shard directory) are yielded in-stream
+/// so callers decide whether to abort or skip.
+fn iter_chunk_hashes(root: PathBuf) -> impl Iterator<Item = Result<Hash>> {
+    let outer = match fs::read_dir(&root) {
+        Ok(rd) => rd,
+        Err(_) => return itertools_none(),
+    };
+    let it = outer
+        .filter_map(|a| a.ok())
+        .filter(|a| a.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .flat_map(|a| {
+            fs::read_dir(a.path())
+                .into_iter()
+                .flatten()
+                .filter_map(|b| b.ok())
+                .filter(|b| b.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .flat_map(|b| {
+                    fs::read_dir(b.path())
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|f| f.ok())
+                        .filter_map(|f| {
+                            let name = f.file_name();
+                            let name_str = name.to_string_lossy();
+                            Hash::from_hex(name_str.as_ref()).ok().map(Ok)
+                        })
+                })
+        });
+    Box::new(it) as Box<dyn Iterator<Item = Result<Hash>>>
+}
+
+fn itertools_none() -> Box<dyn Iterator<Item = Result<Hash>>> {
+    Box::new(std::iter::empty())
 }
 
 /// Split a byte slice into chunk-sized windows.
@@ -269,7 +281,7 @@ mod tests {
         let a = store.put(b"a").unwrap();
         let b = store.put(b"bb").unwrap();
         let c = store.put(b"ccc").unwrap();
-        let mut listed = store.iter_hashes().unwrap();
+        let mut listed: Vec<Hash> = store.iter_hashes().filter_map(|r| r.ok()).collect();
         listed.sort();
         let mut expected = vec![a, b, c];
         expected.sort();

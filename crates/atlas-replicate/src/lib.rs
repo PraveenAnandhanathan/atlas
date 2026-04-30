@@ -139,8 +139,7 @@ impl ChunkStore for ReplicatedChunkStore {
         self.tail().size(hash)
     }
 
-    fn iter_hashes(&self) -> Result<Vec<Hash>> {
-        // Tail is the source of truth.
+    fn iter_hashes(&self) -> Box<dyn Iterator<Item = Result<Hash>> + '_> {
         self.tail().iter_hashes()
     }
 }
