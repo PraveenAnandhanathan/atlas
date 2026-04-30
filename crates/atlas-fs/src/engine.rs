@@ -31,6 +31,24 @@ pub trait WriteHook: Send + Sync {
     fn before_write(&self, path: &str, bytes_len: u64) -> Result<()>;
 }
 
+/// The kind of filesystem operation being authorized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpKind {
+    Read,
+    Write,
+    Delete,
+    Rename,
+    List,
+    Stat,
+    Mkdir,
+}
+
+/// Hook called before every filesystem operation to enforce authorization.
+/// Return `Err(Error::PermissionDenied(...))` to block the operation.
+pub trait AuthHook: Send + Sync {
+    fn authorize(&self, principal: &str, path: &str, op: OpKind) -> Result<()>;
+}
+
 /// Publicly visible metadata about a file or directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
@@ -60,6 +78,10 @@ pub struct Fs {
     write_gate: Arc<Mutex<()>>,
     /// Optional pre-write hook (quota enforcement, rate limiting). (P0-2)
     write_hook: Option<Arc<dyn WriteHook>>,
+    /// Optional authorization hook wired into every operation.
+    auth_hook: Option<Arc<dyn AuthHook>>,
+    /// The principal (user/service identity) performing operations on this handle.
+    principal: Option<String>,
     /// In-process cache of decoded directory manifests (P2-1).
     dir_cache: Arc<DashMap<Hash, DirectoryManifest>>,
 }
@@ -146,6 +168,8 @@ impl Fs {
             root_dir: root.to_path_buf(),
             write_gate: Arc::new(Mutex::new(())),
             write_hook: None,
+            auth_hook: None,
+            principal: None,
             dir_cache: Arc::new(DashMap::new()),
         })
     }
@@ -157,9 +181,33 @@ impl Fs {
         self
     }
 
+    /// Attach an authorization hook. Every `read`, `write`, `delete`,
+    /// `rename`, `mkdir`, `list`, and `stat` call will invoke it first.
+    pub fn with_auth_hook(mut self, hook: Arc<dyn AuthHook>) -> Self {
+        self.auth_hook = Some(hook);
+        self
+    }
+
+    /// Set the principal (user identity) for this `Fs` handle.
+    pub fn with_principal(mut self, principal: impl Into<String>) -> Self {
+        self.principal = Some(principal.into());
+        self
+    }
+
     /// The directory this store lives in on disk.
     pub fn store_path(&self) -> &Path {
         &self.root_dir
+    }
+
+    // -- Authorization ------------------------------------------------
+
+    /// Check authorization for `op` on `path`. No-ops when no hook is set.
+    fn auth_check(&self, path: &str, op: OpKind) -> Result<()> {
+        if let Some(hook) = &self.auth_hook {
+            let principal = self.principal.as_deref().unwrap_or("anonymous");
+            hook.authorize(principal, path, op)?;
+        }
+        Ok(())
     }
 
     // -- Reads --------------------------------------------------------
@@ -167,6 +215,7 @@ impl Fs {
     /// Resolve an absolute path to its object hash and kind.
     pub fn stat(&self, path: &str) -> Result<Entry> {
         let path = normalize_path(path)?;
+        self.auth_check(&path, OpKind::Stat)?;
         let (hash, kind) = self.resolve(&path)?;
         let size = match kind {
             ObjectKind::File => self.file_size(&hash)?,
@@ -183,6 +232,7 @@ impl Fs {
     /// List the immediate children of a directory.
     pub fn list(&self, path: &str) -> Result<Vec<Entry>> {
         let path = normalize_path(path)?;
+        self.auth_check(&path, OpKind::List)?;
         let (hash, kind) = self.resolve(&path)?;
         if kind != ObjectKind::Dir {
             return Err(Error::Invalid(format!("not a directory: {path}")));
@@ -209,6 +259,7 @@ impl Fs {
     /// Read a file's raw bytes.
     pub fn read(&self, path: &str) -> Result<Vec<u8>> {
         let path = normalize_path(path)?;
+        self.auth_check(&path, OpKind::Read)?;
         let (hash, kind) = self.resolve(&path)?;
         if kind != ObjectKind::File {
             return Err(Error::Invalid(format!("not a file: {path}")));
@@ -221,6 +272,14 @@ impl Fs {
         let mut out = Vec::with_capacity(blob.total_size as usize);
         for c in &blob.chunks {
             let bytes = self.chunks.get(&c.hash)?;
+            // Verify hash before trusting the bytes (P0-3: silent-corruption prevention).
+            let actual = Hash::of(&bytes);
+            if actual != c.hash {
+                return Err(Error::Integrity {
+                    expected: c.hash.to_hex(),
+                    actual: actual.to_hex(),
+                });
+            }
             if bytes.len() as u32 != c.length {
                 return Err(Error::Integrity {
                     expected: format!("chunk {} length {}", c.hash.short(), c.length),
@@ -237,12 +296,13 @@ impl Fs {
     /// Create or overwrite a file at `path` with `bytes`.
     pub fn write(&self, path: &str, bytes: &[u8]) -> Result<Entry> {
         let path = normalize_path(path)?;
+        self.auth_check(&path, OpKind::Write)?;
         let (parent, name) = parent_and_name(&path)?;
         if name.is_empty() {
             return Err(Error::BadPath(format!("cannot write root: {path}")));
         }
 
-        // P0-2: quota / rate-limit hook
+        // quota / rate-limit hook
         if let Some(hook) = &self.write_hook {
             hook.before_write(&path, bytes.len() as u64)?;
         }
@@ -289,6 +349,7 @@ impl Fs {
     /// Delete a file or empty directory at `path`.
     pub fn delete(&self, path: &str) -> Result<()> {
         let path = normalize_path(path)?;
+        self.auth_check(&path, OpKind::Delete)?;
         if path == "/" {
             return Err(Error::Invalid("cannot delete root".into()));
         }
@@ -318,6 +379,7 @@ impl Fs {
     pub fn rename(&self, from: &str, to: &str) -> Result<()> {
         let from = normalize_path(from)?;
         let to = normalize_path(to)?;
+        self.auth_check(&from, OpKind::Rename)?;
         if from == to {
             return Ok(());
         }
@@ -353,6 +415,7 @@ impl Fs {
     /// Create an empty directory at `path`. Idempotent if it already exists.
     pub fn mkdir(&self, path: &str) -> Result<()> {
         let path = normalize_path(path)?;
+        self.auth_check(&path, OpKind::Mkdir)?;
         if path == "/" {
             return Ok(());
         }
