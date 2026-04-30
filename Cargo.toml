@@ -131,6 +131,7 @@ quick-xml = { version = "0.36", features = ["serialize"] }
 rsa = { version = "0.9", features = ["pem", "sha2"] }
 libloading = "0.8"
 base64 = "0.22"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Internal crates, referenced by siblings
 atlas-core = { path = "crates/atlas-core", version = "0.1.0" }
