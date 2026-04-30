@@ -1,6 +1,6 @@
 //! `atlas-migrate` CLI (T7.8).
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use atlas_fs::Fs;
 use atlas_migrate::{parse_source, pipeline::MigrationConfig, run};
 use clap::{Parser, Subcommand};

@@ -1,6 +1,6 @@
 //! Browser tab IPC types (T6.6).
 
-use atlas_core::{Hash, ObjectKind};
+use atlas_core::ObjectKind;
 use serde::{Deserialize, Serialize};
 
 /// A single row in the file browser pane.

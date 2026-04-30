@@ -1,6 +1,6 @@
 //! `atlas-backup` CLI (T7.2).
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use atlas_backup::{ExportConfig, ReplicationConfig, ReplicationTarget, Replicator};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -40,8 +40,8 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
     let args = Args::parse();
     match args.cmd {
-        Cmd::Export { out, commit, compress } => {
-            let cfg = ExportConfig {
+        Cmd::Export { out, commit: _, compress } => {
+            let _cfg = ExportConfig {
                 commit_hash: atlas_core::Hash::ZERO,
                 dest: out.clone(),
                 compress,

@@ -1494,7 +1494,7 @@ fn cmd_chaos(sub: ChaosCmd) -> Result<()> {
 // ── Phase 7: Backup (T7.2) ────────────────────────────────────────────────────
 
 fn cmd_backup(store: &std::path::Path, sub: BackupCmd) -> Result<()> {
-    use atlas_backup::{ExportConfig, ReplicationConfig, ReplicationTarget, Replicator};
+    use atlas_backup::{ExportConfig, ReplicationConfig, Replicator};
     match sub {
         BackupCmd::Export { out, compress } => {
             let _cfg = ExportConfig {
