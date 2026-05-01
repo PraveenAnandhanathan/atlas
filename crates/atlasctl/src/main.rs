@@ -626,7 +626,7 @@ fn main() -> Result<()> {
         Cmd::Backup(sub) => cmd_backup(&store_path, sub),
         Cmd::Compliance { json } => cmd_compliance(&store_path, json),
         Cmd::Tuning(sub) => cmd_tuning(sub),
-        Cmd::Quota(sub) => cmd_quota(sub),
+        Cmd::Quota(sub) => cmd_quota(&store_path, sub),
         Cmd::Migrate(sub) => cmd_migrate(sub),
     }
 }
@@ -877,6 +877,8 @@ fn cmd_verify(store: &std::path::Path) -> Result<()> {
     let fs = Fs::open(store)?;
     use atlas_chunk::ChunkStore;
     let chunks = atlas_chunk::LocalChunkStore::open(store.join("chunks"))?;
+
+    // Phase 1: verify every raw chunk on disk matches its content-addressed hash.
     let mut n = 0usize;
     let mut failures = 0usize;
     for h_result in chunks.iter_hashes() {
@@ -887,11 +889,26 @@ fn cmd_verify(store: &std::path::Path) -> Result<()> {
             eprintln!("FAIL {h}: {e}");
         }
     }
-    println!("verified {n} chunks, {failures} failure(s)");
-    if failures > 0 {
+    println!("verified {n} chunks, {failures} chunk hash failure(s)");
+
+    // Phase 2: walk the live manifest tree and confirm every referenced file
+    // is readable end-to-end (catches manifests pointing to missing chunks).
+    let mut manifest_failures = 0usize;
+    if let Ok(entries) = fs.list("/") {
+        for entry in entries {
+            if matches!(entry.kind, atlas_core::ObjectKind::File) {
+                if let Err(e) = fs.read(&entry.path) {
+                    manifest_failures += 1;
+                    eprintln!("MANIFEST FAIL {}: {e}", entry.path);
+                }
+            }
+        }
+    }
+    println!("manifest walk: {manifest_failures} file read failure(s)");
+
+    if failures > 0 || manifest_failures > 0 {
         std::process::exit(2);
     }
-    let _ = fs;
     Ok(())
 }
 
@@ -1494,18 +1511,34 @@ fn cmd_chaos(sub: ChaosCmd) -> Result<()> {
 // ── Phase 7: Backup (T7.2) ────────────────────────────────────────────────────
 
 fn cmd_backup(store: &std::path::Path, sub: BackupCmd) -> Result<()> {
-    use atlas_backup::{ExportConfig, ReplicationConfig, Replicator};
+    use atlas_backup::{BackupChain, BundleWriter, ExportConfig, ReplicationConfig, Replicator};
     match sub {
         BackupCmd::Export { out, compress } => {
-            let _cfg = ExportConfig {
+            let cfg = ExportConfig {
                 commit_hash: atlas_core::Hash::ZERO,
                 dest: out.clone(),
                 compress,
                 verify: true,
                 bandwidth_limit: 0,
             };
-            println!("Exporting snapshot to {} (compress={compress})", out.display());
-            println!("Export complete (connect atlas_fs to BundleWriter for production).");
+            tracing::info!(dest = %out.display(), compress, "opening store for export");
+            let fs = Fs::open(store)?;
+            let file = std::fs::File::create(&out)
+                .with_context(|| format!("create {}", out.display()))?;
+            let mut writer = BundleWriter::new(std::io::BufWriter::new(file), cfg)?;
+            for hash_res in fs.chunks().iter_hashes() {
+                let hash = hash_res?;
+                let data = fs.chunks().get(&hash)?;
+                writer.write_chunk(&hash, &data)?;
+            }
+            let stats = writer.finish()?;
+            println!(
+                "Exported {} chunk(s) ({} bytes raw, {:.2}x compression) to {}",
+                stats.chunks_written,
+                stats.bytes_written,
+                stats.compression_ratio(),
+                out.display()
+            );
         }
         BackupCmd::Replicate { target, bundle } => {
             let rt = parse_replication_target(&target)?;
@@ -1520,7 +1553,30 @@ fn cmd_backup(store: &std::path::Path, sub: BackupCmd) -> Result<()> {
             }
         }
         BackupCmd::Status => {
-            println!("Backup chain status: (see {}/backup-chain.json)", store.display());
+            let chain_path = store.join("backup-chain.json");
+            if !chain_path.exists() {
+                println!("No backup chain found at {}", chain_path.display());
+                println!("Run `atlasctl backup export --out <file>` to create the first backup.");
+            } else {
+                let raw = std::fs::read_to_string(&chain_path)
+                    .with_context(|| format!("read {}", chain_path.display()))?;
+                let chain: BackupChain = serde_json::from_str(&raw)
+                    .context("parse backup chain")?;
+                println!(
+                    "Backup chain: {} backup(s), {} full, {} bytes total",
+                    chain.manifests.len(),
+                    chain.full_count(),
+                    chain.total_bytes()
+                );
+                for m in &chain.manifests {
+                    let short_commit = hex::encode(&m.commit_hash.as_bytes()[..4]);
+                    let kind = if m.is_full() { "full" } else { "incr" };
+                    println!(
+                        "  [{}] id={} commit={} chunks={} bytes={}",
+                        kind, m.id, short_commit, m.chunk_count, m.byte_count
+                    );
+                }
+            }
         }
     }
     Ok(())
@@ -1612,9 +1668,41 @@ fn cmd_tuning(sub: TuningCmd) -> Result<()> {
 
 // ── Phase 7: Quota management (T7.7) ──────────────────────────────────────────
 
-fn cmd_quota(sub: QuotaCmd) -> Result<()> {
-    use atlas_quota::{Quota, Tenant, TenantRegistry};
+fn quota_registry_path(store: &std::path::Path) -> std::path::PathBuf {
+    store.join("quota-registry.json")
+}
+
+fn load_quota_registry(store: &std::path::Path) -> Result<atlas_quota::TenantRegistry> {
+    use atlas_quota::{Tenant, TenantRegistry};
     let reg = TenantRegistry::new();
+    let path = quota_registry_path(store);
+    if path.exists() {
+        let raw = std::fs::read_to_string(&path)
+            .with_context(|| format!("read {}", path.display()))?;
+        let tenants: Vec<Tenant> = serde_json::from_str(&raw)
+            .context("parse quota registry")?;
+        for t in tenants {
+            let _ = reg.register(t); // ignore duplicates on load
+        }
+    }
+    Ok(reg)
+}
+
+fn save_quota_registry(
+    store: &std::path::Path,
+    reg: &atlas_quota::TenantRegistry,
+) -> Result<()> {
+    let path = quota_registry_path(store);
+    let tenants = reg.list();
+    let json = serde_json::to_string_pretty(&tenants).context("serialise quota registry")?;
+    std::fs::write(&path, &json)
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+fn cmd_quota(store: &std::path::Path, sub: QuotaCmd) -> Result<()> {
+    use atlas_quota::{Quota, Tenant};
+    let reg = load_quota_registry(store)?;
     match sub {
         QuotaCmd::List => {
             let tenants = reg.list();
@@ -1633,12 +1721,21 @@ fn cmd_quota(sub: QuotaCmd) -> Result<()> {
                     println!("max_bytes   : {}", t.quota.max_bytes);
                     println!("max_objects : {}", t.quota.max_objects);
                 }
-                None => println!("(tenant '{tenant}' not found in this session)"),
+                None => println!("(tenant '{tenant}' not found)"),
             }
         }
         QuotaCmd::Add { tenant, max_bytes, max_objects } => {
-            let q = Quota { tenant_id: tenant.clone(), max_bytes, max_objects, max_read_bps: 0, max_write_bps: 0, max_concurrent_requests: 0 };
-            reg.register(Tenant::new(&tenant, &tenant, q)).map_err(|e| anyhow!(e))?;
+            let q = Quota {
+                tenant_id: tenant.clone(),
+                max_bytes,
+                max_objects,
+                max_read_bps: 0,
+                max_write_bps: 0,
+                max_concurrent_requests: 0,
+            };
+            reg.register(Tenant::new(&tenant, &tenant, q))
+                .map_err(|e| anyhow!(e))?;
+            save_quota_registry(store, &reg)?;
             println!("Registered tenant '{tenant}' (max_bytes={max_bytes}, max_objects={max_objects})");
         }
     }
