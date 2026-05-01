@@ -223,4 +223,38 @@ mod tests {
         // A clean store has no corruption — no violations expected
         assert!(report.passed(), "clean store failed chaos: {}", report.summary());
     }
+
+    // P6-5: GC safety check passes for a store where all live files are readable.
+    // This is the "happy path" — GC would only sweep truly orphaned chunks, which
+    // does not affect any live file's readability.
+    #[test]
+    fn gc_safety_passes_with_live_referenced_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let fs = Fs::init(dir.path()).unwrap();
+        fs.write("/important.txt", b"keep this forever").unwrap();
+        fs.write("/data/report.bin", &[0xFFu8; 512]).unwrap();
+
+        let runner = ChaosRunner::new(false).with_fs(fs);
+
+        // Build a scenario with the GcSafety invariant.
+        let scenario = ChaosScenario {
+            name: "gc_safety_live_files".into(),
+            description: "GC safety with live referenced files".into(),
+            duration: Duration::from_secs(1),
+            faults: vec![],
+            workload: crate::workload::Workload {
+                kind: crate::workload::WorkloadKind::SequentialReadWrite { size_mb: 0 },
+                parallelism: 1,
+            },
+            invariants: vec![crate::invariant::Invariant {
+                kind: crate::invariant::InvariantKind::GcSafety,
+            }],
+        };
+        let report = runner.run(&scenario);
+        assert!(
+            report.passed(),
+            "GC safety check should pass for a clean store: {}",
+            report.summary()
+        );
+    }
 }
