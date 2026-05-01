@@ -32,7 +32,14 @@ pub struct OidcConfig {
     pub principal_claim: String,
     /// Claim containing group memberships.
     pub groups_claim: Option<String>,
+    /// When true, JWTs without a `kid` header or whose `kid` does not match
+    /// any key in the JWKS are rejected. Prevents key-confusion attacks when
+    /// the IdP's JWKS contains multiple RSA signing keys. Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub require_kid: bool,
 }
+
+fn default_true() -> bool { true }
 
 impl OidcConfig {
     pub fn new(
@@ -49,6 +56,7 @@ impl OidcConfig {
             scopes: vec!["openid".into(), "email".into(), "profile".into()],
             principal_claim: "sub".into(),
             groups_claim: Some("groups".into()),
+            require_kid: true,
         }
     }
 }
@@ -243,11 +251,15 @@ fn verify_jwt(
         .map_err(|e| OidcError::Validation(format!("header decode: {e}")))?;
 
     // Find matching key from JWKS.
+    if config.require_kid && header.kid.is_none() {
+        return Err(OidcError::Validation(
+            "JWT has no 'kid' header but require_kid=true in OidcConfig".into(),
+        ));
+    }
     let jwk = jwks
         .keys
         .iter()
         .find(|k| {
-            // Prefer key with matching kid; fall back to first RSA sig key.
             let kid_match = header
                 .kid
                 .as_ref()
@@ -255,7 +267,13 @@ fn verify_jwt(
                 .unwrap_or(false);
             let use_ok = k.key_use.as_deref().map_or(true, |u| u == "sig");
             let type_ok = k.key_type == "RSA";
-            kid_match || (type_ok && use_ok)
+            if config.require_kid {
+                // Strict: only accept a key whose kid matches the JWT header.
+                kid_match
+            } else {
+                // Lenient: accept matching kid or fall back to first RSA sig key.
+                kid_match || (type_ok && use_ok)
+            }
         })
         .ok_or_else(|| OidcError::Validation("no matching JWK found".into()))?;
 

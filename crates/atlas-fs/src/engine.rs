@@ -379,7 +379,10 @@ impl Fs {
     pub fn rename(&self, from: &str, to: &str) -> Result<()> {
         let from = normalize_path(from)?;
         let to = normalize_path(to)?;
+        // Check permission on both source (Rename) and destination (Write)
+        // so a principal cannot move a file into a directory they cannot write.
         self.auth_check(&from, OpKind::Rename)?;
+        self.auth_check(&to, OpKind::Write)?;
         if from == to {
             return Ok(());
         }
@@ -390,26 +393,45 @@ impl Fs {
 
         let (target_hash, target_kind) = self.resolve(&from)?;
 
-        // Remove from source.
-        self.mutate_at(&from_parent, |entries| {
-            let before = entries.len();
-            entries.retain(|e| e.name != from_name);
-            if entries.len() == before {
-                return Err(Error::NotFound(format!("no such entry: {from_name}")));
-            }
-            Ok(())
-        })?;
-
-        // Insert at destination.
-        let new_entry = DirEntry {
-            name: to_name,
-            object_hash: target_hash,
-            kind: target_kind,
-        };
-        self.mutate_at(&to_parent, |entries| {
-            upsert_in_dir(entries, new_entry);
-            Ok(())
-        })
+        if from_parent == to_parent {
+            // Same-directory rename: single atomic mutation avoids a
+            // transient state where the entry is absent from both locations.
+            let new_entry = DirEntry {
+                name: to_name,
+                object_hash: target_hash,
+                kind: target_kind,
+            };
+            self.mutate_at(&from_parent, |entries| {
+                let before = entries.len();
+                entries.retain(|e| e.name != from_name);
+                if entries.len() == before {
+                    return Err(Error::NotFound(format!("no such entry: {from_name}")));
+                }
+                upsert_in_dir(entries, new_entry);
+                Ok(())
+            })
+        } else {
+            // Cross-directory rename: two mutations under the same write gate.
+            // The gate prevents concurrent writers from observing the
+            // intermediate state between the two set_working_root calls.
+            self.mutate_at(&from_parent, |entries| {
+                let before = entries.len();
+                entries.retain(|e| e.name != from_name);
+                if entries.len() == before {
+                    return Err(Error::NotFound(format!("no such entry: {from_name}")));
+                }
+                Ok(())
+            })?;
+            let new_entry = DirEntry {
+                name: to_name,
+                object_hash: target_hash,
+                kind: target_kind,
+            };
+            self.mutate_at(&to_parent, |entries| {
+                upsert_in_dir(entries, new_entry);
+                Ok(())
+            })
+        }
     }
 
     /// Create an empty directory at `path`. Idempotent if it already exists.
