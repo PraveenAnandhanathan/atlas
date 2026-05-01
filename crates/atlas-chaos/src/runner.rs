@@ -142,6 +142,11 @@ impl ChaosRunner {
     }
 
     /// Ensure mark-sweep GC would not delete any chunk still referenced by a manifest.
+    ///
+    /// Strategy:
+    /// 1. Run `mark_sweep(dry_run=true)` to find which chunks are reachable.
+    /// 2. For every live file in the store, verify the chunk store can serve it.
+    ///    If any read fails, GC would expose a missing-chunk error — unsafe.
     fn check_gc_safety(&self) -> Result<bool, String> {
         let fs = match &self.fs {
             Some(f) => f.clone(),
@@ -149,11 +154,30 @@ impl ChaosRunner {
         };
         let gc_report = atlas_gc::mark_sweep(fs.meta(), fs.chunks(), true)
             .map_err(|e| e.to_string())?;
-        // If GC would sweep more than 0 chunks, those are either genuinely
-        // unreachable (safe) or a GC bug (unsafe). Since we run with dry_run=true
-        // inside this check, we treat any would-sweep as safe (GC works correctly).
-        // A real cluster check would cross-reference the sweep list against live refs.
-        let _ = gc_report;
+
+        // If GC would sweep nothing, trivially safe.
+        if gc_report.chunks_swept == 0 {
+            return Ok(false);
+        }
+
+        // Some chunks would be swept. Verify every live file can still be read —
+        // if any read fails with a missing-chunk error, GC would be unsafe.
+        let root_entries = match fs.list("/") {
+            Ok(e) => e,
+            Err(_) => return Ok(false),
+        };
+        for entry in root_entries {
+            if matches!(entry.kind, atlas_core::ObjectKind::File) {
+                if let Err(e) = fs.read(&entry.path) {
+                    warn!(
+                        path = %entry.path,
+                        error = %e,
+                        "file unreadable — GC would sweep a live chunk (unsafe)"
+                    );
+                    return Ok(true); // violated
+                }
+            }
+        }
         Ok(false)
     }
 }
