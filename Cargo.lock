@@ -187,6 +187,7 @@ dependencies = [
  "blake3",
  "clap",
  "hex",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
