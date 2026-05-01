@@ -30,27 +30,23 @@ pub struct CapabilityToken {
 }
 
 impl CapabilityToken {
-    /// Deterministic JSON of the unsigned body (fields sorted alphabetically,
-    /// `signature` excluded).
+    /// Deterministic JSON of the unsigned body (`signature` excluded).
+    ///
+    /// Uses a `BTreeMap` so keys are always emitted in sorted order,
+    /// regardless of serde_json version or struct field declaration order.
     fn body_bytes(&self) -> Vec<u8> {
-        #[derive(Serialize)]
-        struct Body<'a> {
-            expires_at: u64,
-            id: &'a str,
-            issued_at: u64,
-            permissions: &'a Vec<Permission>,
-            principal: &'a str,
-            scope_path: &'a str,
-        }
-        serde_json::to_vec(&Body {
-            expires_at: self.expires_at,
-            id: &self.id,
-            issued_at: self.issued_at,
-            permissions: &self.permissions,
-            principal: &self.principal,
-            scope_path: &self.scope_path,
-        })
-        .unwrap_or_default()
+        use std::collections::BTreeMap;
+        let mut map: BTreeMap<&str, serde_json::Value> = BTreeMap::new();
+        map.insert("expires_at", self.expires_at.into());
+        map.insert("id", self.id.as_str().into());
+        map.insert("issued_at", self.issued_at.into());
+        map.insert(
+            "permissions",
+            serde_json::to_value(&self.permissions).unwrap_or(serde_json::Value::Null),
+        );
+        map.insert("principal", self.principal.as_str().into());
+        map.insert("scope_path", self.scope_path.as_str().into());
+        serde_json::to_vec(&map).unwrap_or_default()
     }
 
     pub fn is_expired(&self) -> bool {

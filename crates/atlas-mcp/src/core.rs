@@ -196,8 +196,26 @@ impl CapabilityCore {
         detail: HashMap<String, String>,
     ) {
         if let Some(a) = &self.audit {
-            if let Ok(mut log) = a.lock() {
-                let _ = log.append(event_type, subject, actor, detail);
+            match a.lock() {
+                Ok(mut log) => {
+                    if let Err(e) = log.append(event_type, subject, actor, detail) {
+                        tracing::error!(
+                            event_type,
+                            subject,
+                            actor,
+                            error = %e,
+                            "audit log append failed — event not recorded"
+                        );
+                    }
+                }
+                Err(_) => {
+                    tracing::error!(
+                        event_type,
+                        subject,
+                        actor,
+                        "audit log mutex poisoned — event not recorded"
+                    );
+                }
             }
         }
     }
@@ -267,7 +285,8 @@ impl CapabilityCore {
                 self.check_scope(&path)?;
                 self.check_policy(principal, &path, Permission::Read)?;
                 let bytes = self.fs.read(&path).map_err(map_fs_err)?;
-                let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let offset = (args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize)
+                    .min(bytes.len());
                 let length = args
                     .get("length")
                     .and_then(|v| v.as_i64())
@@ -277,7 +296,8 @@ impl CapabilityCore {
                 } else {
                     (offset + length as usize).min(bytes.len())
                 };
-                let slice = &bytes[offset.min(bytes.len())..end];
+                // end is always >= offset because both are clamped to bytes.len()
+                let slice = &bytes[offset..end];
                 Ok(json!({
                     "bytes_hex": hex::encode(slice),
                     "size": slice.len(),

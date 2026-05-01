@@ -52,19 +52,19 @@ impl PyStore {
 
     /// Write `data` to logical path `path` (must start with '/').
     fn write(&self, path: &str, data: &[u8]) -> PyResult<()> {
-        let fs = self.fs.lock().unwrap();
+        let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
         fs.write(path, data).map(|_| ()).map_err(into_pyerr)
     }
 
     /// Read the bytes at `path`.
     fn read<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyBytes>> {
-        let fs = self.fs.lock().unwrap();
+        let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
         let bytes = fs.read(path).map_err(into_pyerr)?;
         Ok(PyBytes::new_bound(py, &bytes))
     }
 
     fn exists(&self, path: &str) -> PyResult<bool> {
-        let fs = self.fs.lock().unwrap();
+        let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
         match fs.stat(path) {
             Ok(_) => Ok(true),
             Err(atlas_core::Error::NotFound(_)) => Ok(false),
@@ -73,13 +73,13 @@ impl PyStore {
     }
 
     fn delete(&self, path: &str) -> PyResult<()> {
-        let fs = self.fs.lock().unwrap();
+        let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
         fs.delete(path).map_err(into_pyerr)
     }
 
     /// Snapshot the working root and advance the current branch.
     fn commit(&self, author: &str, email: &str, message: &str) -> PyResult<String> {
-        let fs = self.fs.lock().unwrap();
+        let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
         let v = Version::new(&*fs);
         let h = v
             .commit(Author::new(author, email), message)
@@ -88,26 +88,26 @@ impl PyStore {
     }
 
     fn create_branch(&self, name: &str) -> PyResult<()> {
-        let fs = self.fs.lock().unwrap();
+        let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
         let v = Version::new(&*fs);
         v.branch_create(name, None).map_err(into_pyerr)?;
         Ok(())
     }
 
     fn checkout_branch(&self, name: &str) -> PyResult<()> {
-        let fs = self.fs.lock().unwrap();
+        let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
         let v = Version::new(&*fs);
         v.checkout_branch(name).map_err(into_pyerr)
     }
 
     fn head(&self) -> PyResult<String> {
-        let fs = self.fs.lock().unwrap();
+        let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
         let v = Version::new(&*fs);
         Ok(v.head_commit().map_err(into_pyerr)?.to_hex())
     }
 
     fn list_branches(&self) -> PyResult<Vec<String>> {
-        let fs = self.fs.lock().unwrap();
+        let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
         let v = Version::new(&*fs);
         Ok(v.branch_list()
             .map_err(into_pyerr)?
