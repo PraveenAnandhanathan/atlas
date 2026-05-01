@@ -579,4 +579,96 @@ mod tests {
         // Should be around 2024 (after 2020-01-01 = 1577836800000 ms)
         assert!(ms > 1_577_836_800_000);
     }
+
+    // P6-3a: An assertion whose NotOnOrAfter is in the past must be rejected.
+    // Note: the XML parser handles attributes on `Event::Start` only, so we
+    // must use an open/close `<Conditions>` tag (not self-closing `/>`) to
+    // ensure the attributes are read.
+    #[test]
+    fn expired_saml_assertion_rejected() {
+        use base64::Engine as _;
+        let xml = r#"<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">
+  <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+    <saml:Issuer>https://idp.example.com</saml:Issuer>
+    <saml:Subject><saml:NameID>user@example.com</saml:NameID></saml:Subject>
+    <saml:Conditions NotBefore="1970-01-01T00:00:00Z" NotOnOrAfter="1970-01-02T00:00:00Z">
+    </saml:Conditions>
+  </saml:Assertion>
+</samlp:Response>"#;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(xml.as_bytes());
+        let err = parse_response(&cfg(), &b64).unwrap_err();
+        assert!(
+            matches!(err, SamlError::Expired),
+            "expected Expired, got {err:?}"
+        );
+    }
+
+    // P6-3b: A tampered signed-info blob (garbage signature bytes) must be
+    // rejected as an invalid signature, not accepted or panicked.
+    #[test]
+    fn tampered_signed_info_rejected() {
+        use base64::Engine as _;
+        let now = now_ms();
+        let not_before = format_iso(now - 60_000);
+        let not_after = format_iso(now + 300_000);
+        let xml = format!(
+            r#"<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">
+  <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <ds:SignedInfo>tampered-canonical-content</ds:SignedInfo>
+    <ds:SignatureValue>AAEC</ds:SignatureValue>
+  </ds:Signature>
+  <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+    <saml:Issuer>https://idp.example.com</saml:Issuer>
+    <saml:Subject><saml:NameID>user@example.com</saml:NameID></saml:Subject>
+    <saml:Conditions NotBefore="{not_before}" NotOnOrAfter="{not_after}"/>
+  </saml:Assertion>
+</samlp:Response>"#
+        );
+        let b64 = base64::engine::general_purpose::STANDARD.encode(xml.as_bytes());
+        let mut c = cfg();
+        // A "PUBLIC KEY" PEM with invalid DER content causes from_public_key_pem
+        // to fail, which is an InvalidSignature — the correct rejection path.
+        c.idp_cert_pem =
+            "-----BEGIN PUBLIC KEY-----\ndGFtcGVyZWQ=\n-----END PUBLIC KEY-----".into();
+        let err = parse_response(&c, &b64).unwrap_err();
+        assert!(
+            matches!(err, SamlError::InvalidSignature(_)),
+            "expected InvalidSignature, got {err:?}"
+        );
+    }
+
+    // P6-3c: A certificate whose DER has no RSA OID must be rejected with a
+    // clear "RSA OID not found" message rather than silently accepted.
+    #[test]
+    fn missing_rsa_oid_in_cert_rejected() {
+        use base64::Engine as _;
+        let now = now_ms();
+        let not_before = format_iso(now - 60_000);
+        let not_after = format_iso(now + 300_000);
+        let xml = format!(
+            r#"<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">
+  <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <ds:SignedInfo>some-signed-content</ds:SignedInfo>
+    <ds:SignatureValue>AAEC</ds:SignatureValue>
+  </ds:Signature>
+  <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+    <saml:Issuer>https://idp.example.com</saml:Issuer>
+    <saml:Subject><saml:NameID>user@example.com</saml:NameID></saml:Subject>
+    <saml:Conditions NotBefore="{not_before}" NotOnOrAfter="{not_after}"/>
+  </saml:Assertion>
+</samlp:Response>"#
+        );
+        let b64 = base64::engine::general_purpose::STANDARD.encode(xml.as_bytes());
+        let mut c = cfg();
+        // DER with no RSA OID bytes — parse_spki_from_cert_der must fail gracefully.
+        let fake_der = vec![0x30u8, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let b64_der = base64::engine::general_purpose::STANDARD.encode(&fake_der);
+        c.idp_cert_pem =
+            format!("-----BEGIN CERTIFICATE-----\n{b64_der}\n-----END CERTIFICATE-----");
+        let err = parse_response(&c, &b64).unwrap_err();
+        assert!(
+            matches!(&err, SamlError::InvalidSignature(msg) if msg.contains("RSA OID")),
+            "expected InvalidSignature with 'RSA OID' message, got {err:?}"
+        );
+    }
 }

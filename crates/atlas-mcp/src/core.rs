@@ -830,4 +830,91 @@ mod tests {
             .unwrap();
         assert_eq!(r["text"], "1");
     }
+
+    // P6-4: A poisoned audit-log mutex must not cause invoke() to panic.
+    // The code must log the error and return success for the operation itself.
+    #[test]
+    fn poisoned_audit_log_mutex_does_not_panic() {
+        use atlas_governor::AuditLog;
+
+        let (_d, c) = core();
+        let audit_dir = tempfile::tempdir().unwrap();
+        let audit = AuditLog::open(audit_dir.path()).unwrap();
+        let audit_arc = std::sync::Arc::new(std::sync::Mutex::new(audit));
+
+        // Poison the mutex by panicking inside a thread that holds it.
+        let audit_arc2 = std::sync::Arc::clone(&audit_arc);
+        let _ = std::thread::spawn(move || {
+            let _guard = audit_arc2.lock().unwrap();
+            panic!("intentional poison");
+        })
+        .join(); // captures the panic; mutex is now poisoned
+
+        let c = c.with_audit(audit_arc);
+
+        // An invoke with a poisoned audit log must not panic.
+        // The operation should succeed; only the audit append silently logs an error.
+        let result = c.invoke("alice", "atlas.fs.write", &json!({"path": "/x", "content": "y"}));
+        assert!(
+            result.is_ok(),
+            "operation must succeed even with poisoned audit log"
+        );
+    }
+
+    // P6-6a: offset beyond file length must not panic (returns empty slice).
+    #[test]
+    fn read_offset_beyond_eof_returns_empty() {
+        let (_d, c) = core();
+        c.invoke("u", "atlas.fs.write", &json!({"path": "/f", "content": "hello"}))
+            .unwrap();
+        let r = c
+            .invoke(
+                "u",
+                "atlas.fs.read",
+                &json!({"path": "/f", "offset": 9999, "length": 10}),
+            )
+            .unwrap();
+        assert_eq!(r["size"], 0, "offset past EOF should yield empty slice");
+    }
+
+    // P6-6b: offset + length overflowing file size must be clamped, not panic.
+    #[test]
+    fn read_offset_plus_length_overflow_is_clamped() {
+        let (_d, c) = core();
+        c.invoke("u", "atlas.fs.write", &json!({"path": "/f", "content": "hello"}))
+            .unwrap();
+        // offset=3, length=100 → only 2 bytes ("lo") should be returned.
+        let r = c
+            .invoke(
+                "u",
+                "atlas.fs.read",
+                &json!({"path": "/f", "offset": 3, "length": 100}),
+            )
+            .unwrap();
+        assert_eq!(r["size"], 2, "length must be clamped to remaining bytes");
+        assert_eq!(r["total_size"], 5);
+    }
+
+    // P6-6c: negative length (read-all) with a non-zero offset must return
+    // the tail of the file, not the full file.
+    #[test]
+    fn read_negative_length_with_offset_returns_tail() {
+        let (_d, c) = core();
+        c.invoke(
+            "u",
+            "atlas.fs.write",
+            &json!({"path": "/f", "content": "abcde"}),
+        )
+        .unwrap();
+        let r = c
+            .invoke(
+                "u",
+                "atlas.fs.read",
+                &json!({"path": "/f", "offset": 2, "length": -1}),
+            )
+            .unwrap();
+        // "cde" = 3 bytes
+        assert_eq!(r["size"], 3);
+        assert_eq!(r["bytes_hex"], hex::encode(b"cde"));
+    }
 }

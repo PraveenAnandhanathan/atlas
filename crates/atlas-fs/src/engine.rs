@@ -821,4 +821,71 @@ mod tests {
         fs.write("/big", &data).unwrap();
         assert_eq!(fs.read("/big").unwrap(), data);
     }
+
+    // P6-1: Concurrent rename + write must not lose any write.
+    #[test]
+    fn concurrent_rename_and_write_no_data_loss() {
+        let (_d, fs) = tmp_fs();
+        let fs = Arc::new(fs);
+        // Seed four source files for renaming.
+        for i in 0..4u8 {
+            fs.write(&format!("/src/file-{i}"), &[i; 64]).unwrap();
+        }
+        let mut handles = Vec::new();
+        // Four threads rename src → dst concurrently.
+        for i in 0..4u8 {
+            let fs2 = Arc::clone(&fs);
+            handles.push(std::thread::spawn(move || {
+                // Rename may fail if another thread already moved it; that's fine.
+                let _ = fs2.rename(&format!("/src/file-{i}"), &format!("/dst/file-{i}"));
+            }));
+        }
+        // Four more threads write brand-new files concurrently.
+        for i in 4..8u8 {
+            let fs2 = Arc::clone(&fs);
+            handles.push(std::thread::spawn(move || {
+                fs2.write(&format!("/new/file-{i}"), &[i; 64]).unwrap();
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        // All four new files must be present.
+        let new_entries = fs.list("/new").unwrap();
+        assert_eq!(new_entries.len(), 4, "all 4 concurrent writes must survive renames");
+    }
+
+    // P6-2: Rename whose destination is forbidden by the auth hook must fail
+    // and leave the source file intact.
+    #[test]
+    fn rename_to_denied_path_returns_permission_denied() {
+        struct DenyRestricted;
+        impl AuthHook for DenyRestricted {
+            fn authorize(&self, _principal: &str, path: &str, op: OpKind) -> Result<()> {
+                if path.starts_with("/restricted") && op == OpKind::Write {
+                    Err(Error::PermissionDenied("restricted path".into()))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        let (_d, fs) = tmp_fs();
+        let fs = fs
+            .with_auth_hook(Arc::new(DenyRestricted))
+            .with_principal("alice");
+        fs.write("/src/file.txt", b"data").unwrap();
+        let err = fs
+            .rename("/src/file.txt", "/restricted/file.txt")
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::PermissionDenied(_)),
+            "expected PermissionDenied, got {err:?}"
+        );
+        // Source must remain untouched.
+        assert_eq!(
+            fs.read("/src/file.txt").unwrap(),
+            b"data".to_vec(),
+            "source file must still exist after failed rename"
+        );
+    }
 }
