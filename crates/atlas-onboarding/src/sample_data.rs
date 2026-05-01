@@ -28,6 +28,56 @@ pub fn seed_sample_data(root: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Build a minimal but spec-compliant Parquet file with 0 rows and 0 columns.
+///
+/// The format is:
+/// ```text
+/// [4]  magic: "PAR1"
+/// [N]  footer: Thrift Compact-encoded FileMetaData
+/// [4]  footer_length: u32 LE
+/// [4]  magic: "PAR1"
+/// ```
+///
+/// FileMetaData encoded fields:
+///   field 1 (version=2, i32), field 2 (schema=[root group], list),
+///   field 3 (num_rows=0, i64), field 4 (row_groups=[], list)
+fn minimal_parquet() -> Vec<u8> {
+    // Thrift Compact Protocol encoding of FileMetaData.
+    // Field headers: (delta << 4) | type_id
+    // Type IDs: I32=5, I64=6, BINARY=8, LIST=9, STRUCT=12
+    // ZigZag varint: zigzag(n) = (n << 1) ^ (n >> 63)  →  0→0, 2→4
+    let footer: &[u8] = &[
+        // field 1 (version, i32): delta=1, type=5 → 0x15; zigzag(2)=4 → 0x04
+        0x15, 0x04,
+        // field 2 (schema, list): delta=1, type=9 → 0x19
+        0x19,
+        // list header: 1 element of type STRUCT(12) → (1<<4)|12 = 0x1C
+        0x1C,
+        // SchemaElement { name="schema", num_children=0 }
+        //   field 4 (name, binary): delta=4, type=8 → 0x48; length=6 → 0x06; "schema"
+        0x48, 0x06, b's', b'c', b'h', b'e', b'm', b'a',
+        //   field 5 (num_children, i32): delta=1, type=5 → 0x15; zigzag(0)=0 → 0x00
+        0x15, 0x00,
+        //   stop SchemaElement
+        0x00,
+        // field 3 (num_rows, i64): delta=1, type=6 → 0x16; zigzag(0)=0 → 0x00
+        0x16, 0x00,
+        // field 4 (row_groups, list): delta=1, type=9 → 0x19
+        0x19,
+        // list header: 0 elements of type STRUCT(12) → (0<<4)|12 = 0x0C
+        0x0C,
+        // stop FileMetaData
+        0x00,
+    ];
+    let footer_len = footer.len() as u32;
+    let mut out = Vec::with_capacity(4 + footer.len() + 4 + 4);
+    out.extend_from_slice(b"PAR1");
+    out.extend_from_slice(footer);
+    out.extend_from_slice(&footer_len.to_le_bytes());
+    out.extend_from_slice(b"PAR1");
+    out
+}
+
 fn write_readme(fs: &Fs) -> anyhow::Result<()> {
     let content = b"\
 # ATLAS Sample Volume\n\
@@ -47,11 +97,7 @@ Open ATLAS Explorer to browse, view lineage, and inspect policies.\n";
 fn write_datasets(fs: &Fs) -> anyhow::Result<()> {
     fs.mkdir("/datasets")?;
 
-    // Synthetic Parquet stub — just the PAR1 magic; not a real file.
-    let mut parquet = b"PAR1".to_vec();
-    parquet.extend(vec![0u8; 64]);
-    parquet.extend(b"PAR1");
-    fs.write("/datasets/iris.parquet", &parquet)?;
+    fs.write("/datasets/iris.parquet", &minimal_parquet())?;
 
     // 10 JSONL records.
     let jsonl: String = (0..10)
@@ -109,6 +155,21 @@ mod tests {
         assert!(fs.stat("/datasets/iris.parquet").is_ok());
         assert!(fs.stat("/datasets/labels.jsonl").is_ok());
         assert!(fs.stat("/models/tiny.safetensors").is_ok());
+    }
+
+    #[test]
+    fn parquet_file_is_structurally_valid() {
+        let p = minimal_parquet();
+        // Magic at start and end.
+        assert_eq!(&p[..4], b"PAR1");
+        assert_eq!(&p[p.len() - 4..], b"PAR1");
+        // Footer length at bytes [-8..-4] matches actual footer size.
+        let footer_len =
+            u32::from_le_bytes(p[p.len() - 8..p.len() - 4].try_into().unwrap()) as usize;
+        assert!(footer_len > 0, "footer must be non-empty");
+        // Footer region is within the file.
+        let footer_start = p.len() - 8 - footer_len;
+        assert!(footer_start >= 4, "footer must not overlap the leading magic");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! `atlas-backup` CLI (T7.2).
 
 use anyhow::Result;
-use atlas_backup::{ExportConfig, ReplicationConfig, ReplicationTarget, Replicator};
+use atlas_backup::{BackupChain, BundleWriter, ExportConfig, ReplicationConfig, ReplicationTarget, Replicator};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -41,16 +41,32 @@ fn main() -> Result<()> {
     let args = Args::parse();
     match args.cmd {
         Cmd::Export { out, commit: _, compress } => {
-            let _cfg = ExportConfig {
+            let cfg = ExportConfig {
                 commit_hash: atlas_core::Hash::ZERO,
                 dest: out.clone(),
                 compress,
                 verify: true,
                 bandwidth_limit: 0,
             };
-            println!("Exporting snapshot to {} (compress={})", out.display(), compress);
-            // Real: open Fs, iterate chunks, call BundleWriter.
-            println!("Export complete (stub — connect atlas_fs to BundleWriter).");
+            tracing::info!(dest = %out.display(), compress, "opening store for export");
+            let fs = atlas_fs::Fs::open(&args.store)?;
+            let file = std::fs::File::create(&out)
+                .map_err(|e| anyhow::anyhow!("create {}: {e}", out.display()))?;
+            let mut writer = BundleWriter::new(std::io::BufWriter::new(file), cfg)?;
+            for hash_res in fs.chunks().iter_hashes() {
+                let hash = hash_res.map_err(|e| anyhow::anyhow!("chunk iter: {e}"))?;
+                let data = fs.chunks().get(&hash)
+                    .map_err(|e| anyhow::anyhow!("chunk get {}: {e}", hash.to_hex()))?;
+                writer.write_chunk(&hash, &data)?;
+            }
+            let stats = writer.finish()?;
+            println!(
+                "Exported {} chunk(s) ({} bytes raw, {:.2}x compression) to {}",
+                stats.chunks_written,
+                stats.bytes_written,
+                stats.compression_ratio(),
+                out.display()
+            );
         }
         Cmd::Replicate { target, bundle } => {
             let rt = parse_target(&target)?;
@@ -66,7 +82,30 @@ fn main() -> Result<()> {
             }
         }
         Cmd::Status => {
-            println!("Backup chain status: (stub — read from {}/backup-chain.json)", args.store.display());
+            let chain_path = args.store.join("backup-chain.json");
+            if !chain_path.exists() {
+                println!("No backup chain found at {}", chain_path.display());
+                println!("Run `atlas-backup export --out <file>` to create the first backup.");
+            } else {
+                let raw = std::fs::read_to_string(&chain_path)
+                    .map_err(|e| anyhow::anyhow!("read {}: {e}", chain_path.display()))?;
+                let chain: BackupChain = serde_json::from_str(&raw)
+                    .map_err(|e| anyhow::anyhow!("parse backup chain: {e}"))?;
+                println!(
+                    "Backup chain: {} backup(s), {} full, {} bytes total",
+                    chain.manifests.len(),
+                    chain.full_count(),
+                    chain.total_bytes()
+                );
+                for m in &chain.manifests {
+                    let short_commit = hex::encode(&m.commit_hash.as_bytes()[..4]);
+                    let kind = if m.is_full() { "full" } else { "incr" };
+                    println!(
+                        "  [{}] id={} commit={} chunks={} bytes={}",
+                        kind, m.id, short_commit, m.chunk_count, m.byte_count
+                    );
+                }
+            }
         }
     }
     Ok(())

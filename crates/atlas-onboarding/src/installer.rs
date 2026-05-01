@@ -110,8 +110,7 @@ pub fn install(config: &InstallConfig) -> anyhow::Result<()> {
 
     if config.shell_integration {
         tracing::info!(platform = ?config.platform, "registering shell integration");
-        // Real: call atlas_shellext_win::registry::register() on Windows,
-        // launchctl + FinderSync appex on macOS, xdg-mime on Linux.
+        register_shell_integration(config)?;
     }
 
     tracing::info!(prefix = %config.prefix.display(), "ATLAS installation complete");
@@ -126,6 +125,142 @@ pub fn uninstall(config: &InstallConfig) -> anyhow::Result<()> {
     }
     tracing::info!(prefix = %config.prefix.display(), "ATLAS uninstallation complete");
     Ok(())
+}
+
+fn register_shell_integration(config: &InstallConfig) -> anyhow::Result<()> {
+    match config.platform {
+        Platform::Windows => register_shell_windows(config),
+        Platform::MacOs => register_shell_macos(config),
+        Platform::Linux => register_shell_linux(config),
+    }
+}
+
+fn register_shell_windows(config: &InstallConfig) -> anyhow::Result<()> {
+    // Register the COM shell-extension DLL with Windows Explorer via regsvr32.
+    // The DLL must already be present at prefix\bin\atlas_shell.dll.
+    let dll = config.prefix.join("bin").join("atlas_shell.dll");
+    if !dll.exists() {
+        tracing::warn!(dll = %dll.display(), "shell DLL not found; skipping regsvr32");
+        return Ok(());
+    }
+    let status = std::process::Command::new("regsvr32")
+        .args(["/s", &dll.to_string_lossy()])
+        .status()
+        .map_err(|e| anyhow::anyhow!("regsvr32: {e}"))?;
+    if !status.success() {
+        anyhow::bail!("regsvr32 failed with exit code {:?}", status.code());
+    }
+    tracing::info!("Windows shell extension registered via regsvr32");
+    Ok(())
+}
+
+fn register_shell_macos(config: &InstallConfig) -> anyhow::Result<()> {
+    // Write a LaunchAgent plist so the sync daemon starts at login.
+    let launch_agents = dirs_macos_launch_agents();
+    std::fs::create_dir_all(&launch_agents)?;
+    let plist_path = launch_agents.join("io.atlasfs.sync.plist");
+    let daemon_bin = config.prefix.join("bin").join("atlas-sync");
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>       <string>io.atlasfs.sync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{daemon}</string>
+        <string>--store</string>
+        <string>{store}</string>
+    </array>
+    <key>RunAtLoad</key>   <true/>
+    <key>KeepAlive</key>   <true/>
+</dict>
+</plist>
+"#,
+        daemon = daemon_bin.display(),
+        store = config.data_dir.display()
+    );
+    std::fs::write(&plist_path, &plist)?;
+
+    // Load the agent now (non-fatal if launchctl is unavailable in tests).
+    let _ = std::process::Command::new("launchctl")
+        .args(["load", "-w", &plist_path.to_string_lossy()])
+        .status();
+
+    // Activate the Finder Sync extension if the .appex bundle exists.
+    let appex = config.prefix
+        .join("Applications")
+        .join("ATLAS.app")
+        .join("Contents")
+        .join("PlugIns")
+        .join("ATLASFinderSync.appex");
+    if appex.exists() {
+        let _ = std::process::Command::new("pluginkit")
+            .args(["-a", &appex.to_string_lossy()])
+            .status();
+        tracing::info!(appex = %appex.display(), "Finder Sync extension activated");
+    }
+
+    tracing::info!(plist = %plist_path.display(), "macOS LaunchAgent registered");
+    Ok(())
+}
+
+fn register_shell_linux(config: &InstallConfig) -> anyhow::Result<()> {
+    // Register ATLAS MIME types so the file manager shows custom icons.
+    let mime_xml = config.prefix.join("share").join("mime").join("packages").join("atlas.xml");
+    if mime_xml.exists() {
+        let _ = std::process::Command::new("xdg-mime")
+            .args(["install", "--novendor", &mime_xml.to_string_lossy()])
+            .status();
+        tracing::info!(mime_xml = %mime_xml.display(), "xdg-mime types registered");
+    }
+
+    // Install the desktop file so the launcher picks up ATLAS Explorer.
+    let desktop_file = config.prefix.join("share").join("applications").join("atlas-explorer.desktop");
+    if desktop_file.exists() {
+        let _ = std::process::Command::new("xdg-desktop-menu")
+            .args(["install", "--novendor", &desktop_file.to_string_lossy()])
+            .status();
+        tracing::info!("xdg desktop menu entry installed");
+    }
+
+    // Write and enable a systemd user service for the sync daemon.
+    if let Some(systemd_user) = dirs_systemd_user() {
+        std::fs::create_dir_all(&systemd_user)?;
+        let unit_path = systemd_user.join("atlas-sync.service");
+        let daemon_bin = config.prefix.join("bin").join("atlas-sync");
+        let unit = format!(
+            "[Unit]\nDescription=ATLAS sync daemon\nAfter=network.target\n\n\
+             [Service]\nExecStart={daemon} --store {store}\nRestart=on-failure\n\n\
+             [Install]\nWantedBy=default.target\n",
+            daemon = daemon_bin.display(),
+            store = config.data_dir.display()
+        );
+        std::fs::write(&unit_path, &unit)?;
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "enable", "--now", "atlas-sync.service"])
+            .status();
+        tracing::info!(unit = %unit_path.display(), "systemd user service enabled");
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn dirs_macos_launch_agents() -> std::path::PathBuf {
+    std::path::PathBuf::from(
+        std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
+    ).join("Library").join("LaunchAgents")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn dirs_macos_launch_agents() -> std::path::PathBuf {
+    std::path::PathBuf::from("/tmp")
+}
+
+fn dirs_systemd_user() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(std::path::PathBuf::from(home).join(".config").join("systemd").join("user"))
 }
 
 fn is_writable(path: &Path) -> bool {

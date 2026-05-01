@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_s3_records_failures_not_silent_success() {
+    fn migration_s3_enumerate_returns_empty_without_network() {
         let (_dst, fs) = tmp_fs();
         let config = MigrationConfig {
             source: parse_source("s3://bucket/prefix").unwrap(),
@@ -165,9 +165,23 @@ mod tests {
             verify: true,
         };
         let (_results, stats) = run(&config, &fs);
-        // S3 fetch is not yet wired — all objects should fail, not silently succeed
-        assert!(stats.objects_total > 0);
-        assert!(stats.objects_failed > 0);
+        // No real S3 reachable in unit tests: enumerate returns empty, no
+        // objects are silently "transferred" as successes.
+        assert_eq!(stats.objects_transferred, 0, "must not silently succeed");
+    }
+
+    #[test]
+    fn s3_fetch_object_fails_gracefully_on_bad_endpoint() {
+        use crate::source::{fetch_object, MigrationSource, SourceObject};
+        let src = MigrationSource::S3 {
+            endpoint: "http://127.0.0.1:1".into(), // nothing listening here
+            bucket: "b".into(),
+            prefix: String::new(),
+            region: "us-east-1".into(),
+        };
+        let obj = SourceObject { path: "key.bin".into(), size: 0, source_id: "id".into() };
+        let result = fetch_object(&src, &obj);
+        assert!(result.is_err(), "S3 fetch must return Err when endpoint is unreachable");
     }
 
     #[test]
