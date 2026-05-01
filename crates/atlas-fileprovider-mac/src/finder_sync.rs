@@ -82,9 +82,21 @@ impl FinderSyncCore {
     }
 
     /// Determine the appropriate badge for `atlas_path`.
-    /// In production this queries the sync daemon; stub returns Synced.
-    pub fn badge_for(&self, _atlas_path: &str) -> BadgeKind {
-        BadgeKind::Synced
+    ///
+    /// Reads `{volume_root}/.atlas/sync-state.json`, which the sync daemon
+    /// writes atomically as a `HashMap<String, BadgeKind>` keyed by
+    /// volume-relative path.  Falls back to `Synced` if the file is absent
+    /// or the path is not listed (meaning no pending changes are known).
+    pub fn badge_for(&self, atlas_path: &str) -> BadgeKind {
+        self.load_sync_state()
+            .and_then(|map| map.get(atlas_path).cloned())
+            .unwrap_or(BadgeKind::Synced)
+    }
+
+    fn load_sync_state(&self) -> Option<std::collections::HashMap<String, BadgeKind>> {
+        let state_file = self.volume_root.join(".atlas").join("sync-state.json");
+        let raw = std::fs::read(&state_file).ok()?;
+        serde_json::from_slice(&raw).ok()
     }
 
     /// Context-menu items for `atlas_path`.
@@ -100,6 +112,7 @@ impl FinderSyncCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn badge_asset_names_nonempty() {
@@ -117,5 +130,31 @@ mod tests {
         for item in ToolbarAction::toolbar_items() {
             assert!(!item.title().is_empty());
         }
+    }
+
+    #[test]
+    fn badge_for_defaults_to_synced_when_no_state_file() {
+        let dir = TempDir::new().unwrap();
+        let core = FinderSyncCore::new(dir.path());
+        assert_eq!(core.badge_for("/some/file.txt"), BadgeKind::Synced);
+    }
+
+    #[test]
+    fn badge_for_reads_state_file() {
+        let dir = TempDir::new().unwrap();
+        let atlas_dir = dir.path().join(".atlas");
+        std::fs::create_dir_all(&atlas_dir).unwrap();
+        let state: std::collections::HashMap<&str, BadgeKind> = [
+            ("/model.safetensors", BadgeKind::Modified),
+            ("/data/iris.parquet", BadgeKind::Syncing),
+        ]
+        .into_iter()
+        .collect();
+        std::fs::write(atlas_dir.join("sync-state.json"), serde_json::to_vec(&state).unwrap()).unwrap();
+
+        let core = FinderSyncCore::new(dir.path());
+        assert_eq!(core.badge_for("/model.safetensors"), BadgeKind::Modified);
+        assert_eq!(core.badge_for("/data/iris.parquet"), BadgeKind::Syncing);
+        assert_eq!(core.badge_for("/untracked.txt"), BadgeKind::Synced);
     }
 }

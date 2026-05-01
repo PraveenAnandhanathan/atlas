@@ -117,7 +117,7 @@ pub fn parse_response(
     if now + 60_000 < not_before_ms {
         return Err(SamlError::Expired);
     }
-    if now > not_on_or_after_ms + 60_000 {
+    if now > not_on_or_after_ms.saturating_add(60_000) {
         return Err(SamlError::Expired);
     }
 
