@@ -565,6 +565,18 @@ impl CapabilityCore {
             lineage_record => {
                 let source = req_hash(args, "source")?;
                 let sink = req_hash(args, "sink")?;
+                // P7-2: write-time constraint validation.
+                // Self-edges and null-hash edges are always logically invalid;
+                // reject them here so corrupt entries never reach the journal.
+                if source == sink {
+                    return Err(ApiError::invalid("lineage source and sink must differ"));
+                }
+                if source == Hash::ZERO {
+                    return Err(ApiError::invalid("lineage source hash must not be zero"));
+                }
+                if sink == Hash::ZERO {
+                    return Err(ApiError::invalid("lineage sink hash must not be zero"));
+                }
                 let kind = args
                     .get("kind")
                     .and_then(|v| v.as_str())
@@ -916,5 +928,48 @@ mod tests {
         // "cde" = 3 bytes
         assert_eq!(r["size"], 3);
         assert_eq!(r["bytes_hex"], hex::encode(b"cde"));
+    }
+
+    // P7-2: lineage self-edge must be rejected at write time.
+    #[test]
+    fn lineage_self_edge_rejected() {
+        use atlas_lineage::LineageJournal;
+        let (_d, c) = core();
+        let lineage_dir = tempfile::tempdir().unwrap();
+        let j = LineageJournal::open(lineage_dir.path()).unwrap();
+        let c = c.with_lineage(std::sync::Arc::new(std::sync::Mutex::new(j)));
+
+        let h = "a".repeat(64); // valid 32-byte hex hash
+        let err = c
+            .invoke(
+                "u",
+                "atlas.lineage.record",
+                &json!({"source": h, "sink": h, "kind": "derive"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
+        assert!(err.message.contains("differ"));
+    }
+
+    // P7-2: lineage zero-hash source must be rejected.
+    #[test]
+    fn lineage_zero_hash_source_rejected() {
+        use atlas_lineage::LineageJournal;
+        let (_d, c) = core();
+        let lineage_dir = tempfile::tempdir().unwrap();
+        let j = LineageJournal::open(lineage_dir.path()).unwrap();
+        let c = c.with_lineage(std::sync::Arc::new(std::sync::Mutex::new(j)));
+
+        let zero = "0".repeat(64);
+        let nonzero = "a".repeat(64);
+        let err = c
+            .invoke(
+                "u",
+                "atlas.lineage.record",
+                &json!({"source": zero, "sink": nonzero, "kind": "derive"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
+        assert!(err.message.contains("zero"));
     }
 }

@@ -101,7 +101,14 @@ pub fn parse_response(
     let parsed = parse_saml_xml(xml)?;
 
     // 3. Verify RSA-SHA256 signature (if cert is provided).
-    if !config.idp_cert_pem.is_empty() && parsed.signed_info_canonical.is_some() {
+    // P7-3: warn operators when no cert is configured so they don't silently
+    // accept unsigned assertions in production.
+    if config.idp_cert_pem.is_empty() {
+        tracing::warn!(
+            sp = %config.sp_entity_id,
+            "idp_cert_pem is empty — SAML assertion signature verification is DISABLED"
+        );
+    } else if parsed.signed_info_canonical.is_some() {
         verify_rsa_sha256(
             config,
             parsed.signed_info_canonical.as_deref().unwrap(),
