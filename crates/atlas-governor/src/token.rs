@@ -84,7 +84,7 @@ impl TokenAuthority {
         let key = SigningKey::from_bytes(&seed);
         std::fs::write(dir.join("signing.key"), hex::encode(key.to_bytes()))?;
         let rev_path = dir.join("revoked.json");
-        std::fs::write(&rev_path, "[]")?;
+        persist_revoked(&rev_path, &HashSet::new())?;
         Ok(Self {
             key,
             revoked: HashSet::new(),
@@ -170,12 +170,15 @@ impl TokenAuthority {
             .map_err(|e| GovernorError::Token(e.to_string()))
     }
 
-    /// Revoke a token by ID (persisted immediately).
+    /// Revoke a token by ID (persisted immediately with an atomic write).
+    ///
+    /// Writes to a `.tmp` sibling file first, then renames it over the target.
+    /// On POSIX this rename is atomic, so a crash mid-write never leaves a
+    /// half-written or empty revocation list.  Previously revoked tokens are
+    /// never accidentally un-revoked due to a torn write.
     pub fn revoke(&mut self, id: &str) -> Result<()> {
         self.revoked.insert(id.to_string());
-        let json = serde_json::to_string(&self.revoked)?;
-        std::fs::write(&self.revoked_path, json)?;
-        Ok(())
+        persist_revoked(&self.revoked_path, &self.revoked)
     }
 
     pub fn is_revoked(&self, id: &str) -> bool {
@@ -195,6 +198,16 @@ fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// Atomically persist the revocation set.  Writes to `<path>.tmp` then
+/// renames over `path` so a crash mid-write cannot corrupt the live file.
+fn persist_revoked(path: &std::path::Path, revoked: &HashSet<String>) -> Result<()> {
+    let tmp = path.with_extension("tmp");
+    let json = serde_json::to_string(revoked)?;
+    std::fs::write(&tmp, &json)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -258,5 +271,23 @@ mod tests {
         let json = token.encode().unwrap();
         let decoded = CapabilityToken::decode(&json).unwrap();
         assert!(auth.verify(&decoded).is_ok());
+    }
+
+    // P7-4: revocation list survives a reload (atomic write + re-parse).
+    #[test]
+    fn revocation_survives_reload() {
+        let dir = tempdir().unwrap();
+        let mut auth = TokenAuthority::generate(dir.path()).unwrap();
+        let token = auth
+            .issue("frank", "/", vec![Permission::Read], 3600)
+            .unwrap();
+        auth.revoke(&token.id).unwrap();
+        // Reload from disk.
+        let auth2 = TokenAuthority::load(dir.path()).unwrap();
+        assert!(
+            auth2.is_revoked(&token.id),
+            "revocation must persist across a reload"
+        );
+        assert!(auth2.verify(&token).is_err());
     }
 }

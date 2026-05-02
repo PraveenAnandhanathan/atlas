@@ -296,6 +296,12 @@ impl Fs {
     /// Create or overwrite a file at `path` with `bytes`.
     pub fn write(&self, path: &str, bytes: &[u8]) -> Result<Entry> {
         let path = normalize_path(path)?;
+        // AUTH-HOOK TIMING NOTE (P7-1): auth_check runs on the path string
+        // *before* write_gate is acquired.  A concurrent writer could change
+        // the tree between this check and the actual mutation; the auth hook
+        // therefore enforces path-based policy, not content-based policy.
+        // Callers that need content-aware enforcement (e.g. DLP) must chain a
+        // WriteHook, which runs inside the gate (see below).
         self.auth_check(&path, OpKind::Write)?;
         let (parent, name) = parent_and_name(&path)?;
         if name.is_empty() {
@@ -381,6 +387,13 @@ impl Fs {
         let to = normalize_path(to)?;
         // Check permission on both source (Rename) and destination (Write)
         // so a principal cannot move a file into a directory they cannot write.
+        //
+        // AUTH-HOOK TIMING NOTE (P7-1): both auth checks execute on the path
+        // strings *before* the write_gate is acquired.  A concurrent mutation
+        // could alter the tree between the check and the rename, so policy is
+        // path-based only.  For example, if another thread deletes `/to`'s
+        // parent directory after auth passes, the rename itself will fail with
+        // NotFound — the auth gap cannot lead to a silent overwrite.
         self.auth_check(&from, OpKind::Rename)?;
         self.auth_check(&to, OpKind::Write)?;
         if from == to {
