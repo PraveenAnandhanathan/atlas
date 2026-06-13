@@ -3,7 +3,7 @@
 **A**ddressable, **T**ype-aware, **L**ineage-tracked, **A**uditable **S**torage —
 a content-addressed, versioned filesystem for AI-era data.
 
-> **Status:** Phases 0 – 5 complete. Single-node substrate, distributed plane, semantic plane, governance plane, and the full protocol surface (MCP / A2A / REST / gRPC / S3 / Anthropic & OpenAI tool-use) are wired and tested. Desktop integration (Phase 6) and production hardening (Phase 7) are next.
+> **Status:** Phases 0 – 8 complete. Single-node substrate, distributed plane, semantic plane, governance plane, full protocol surface, desktop integration, architecture hardening, and production hardening (encryption at rest, enterprise auth, durable sessions) are wired and tested.
 
 The full vision is in
 [ATLAS_design_report.md](ATLAS_design_report.md); the build plan is in
@@ -68,11 +68,40 @@ key decisions live in [docs/adr/](docs/adr/).
 - **`atlas-conformance`** — drives every probe through all six wires
   and asserts they agree.
 
+### Phase 6 – Desktop integration
+- **WinFsp** shell extension (`atlas-shellext-win`) — Windows Explorer virtual drive.
+- **macOS FileProvider** (`atlas-fileprovider-mac`) — Finder integration via
+  FileProvider framework, progress reporting, item identifiers.
+- **GVFS FUSE adapter** (`atlas-gvfs`) — GNOME Virtual Filesystem for Linux desktops.
+- **`atlas-explorer-ipc`** — shared IPC channel between shell extensions and the daemon.
+
+### Phase 7 – Architecture hardening
+- Timing-side-channel hardening: constant-time token comparison via `subtle` crate;
+  ADR-0009 documents the decision.
+- Lineage validation: `validate_refs()` on every `record()` call rejects dangling
+  source references before they reach the journal.
+- SAML clock-skew: `parse_response()` emits a `warn!` when the clock drift exceeds
+  30 seconds rather than silently accepting.
+- Atomic capability revocation: `RevocationStore::revoke_all_for_principal()` is
+  now a single compare-and-swap loop instead of per-token iteration.
+
+### Phase 8 – Production hardening
+- **`EncryptedChunkStore`** (`atlas-chunk`): AES-256-GCM per-chunk encryption with
+  HKDF-SHA256 key derivation. Content-addressing on plaintext is preserved —
+  dedup and integrity checks work unchanged. Master key resolves from
+  `ATLAS_ENCRYPTION_KEY` env var (KMS), `<store>/encryption.key` file, or
+  auto-generated on first open.
+- **`SessionConfig`** profiles: `enterprise()` (8 h / 5 sessions), `personal()`
+  (30 d / 20 sessions), `kiosk()` (1 h / 1 session), `api_key()` (90 d / 100 sessions).
+- **`SledSessionStore`**: durable sled-backed session persistence; sessions survive
+  process restarts with lazy expiry removal.
+- Bug fixes: `fs_append` silent data truncation; wire protocol serialization-error
+  envelope; `invoke()` principal validation; Mutex lock-poisoning recovery in
+  `session.rs`, `scim.rs`, `tenant.rs`.
+
 ## Not yet wired
 
-- Windows WinFsp driver, macOS FileProvider, Finder/Explorer extensions,
-  Tauri GUI (Phase 6).
-- Chaos framework, enterprise auth, DR, compliance work (Phase 7).
+- Tauri GUI, full DR runbook, compliance audit log export.
 
 ## Repo layout
 
@@ -106,6 +135,18 @@ crates/
   atlas-s3/               S3 v4 gateway
   atlas-toolwire/         Anthropic / OpenAI tool-use adapters
   atlas-conformance/      one capability, N wire formats — assertion harness
+
+  atlas-shellext-win/     Windows WinFsp shell extension
+  atlas-fileprovider-mac/ macOS FileProvider + Finder integration
+  atlas-gvfs/             GNOME Virtual Filesystem FUSE adapter
+  atlas-explorer-ipc/     IPC channel between shell extensions and daemon
+
+  atlas-auth/             OIDC, SAML 2.0, SCIM 2.0, session management
+  atlas-chaos/            chaos framework — fault injection + DR drills
+  atlas-migrate/          schema migration runner
+  atlas-compliance/       WORM/retention, legal hold, audit export
+  atlas-backup/           snapshot + restore
+  atlas-onboarding/       tenant onboarding wizard
 
   atlasctl/               CLI binary (now ships `mcp serve`)
 clients/
@@ -205,8 +246,10 @@ for entry in store.list("/data"):
 | 3 | Semantics — embeddings, indexer, ingest, hybrid query | ✅ done |
 | 4 | Lineage + governance — journal, policy, redaction, audit, signing | ✅ done |
 | 5 | MCP and protocol surface — MCP/A2A/REST/gRPC/S3/tool-use + conformance | ✅ done |
-| 6 | Desktop integration — WinFsp, FileProvider, Finder/Explorer, Tauri GUI | next |
-| 7 | Production hardening — chaos, enterprise auth, DR, compliance | future |
+| 6 | Desktop integration — WinFsp, FileProvider, GVFS, Explorer IPC | ✅ done |
+| 7 | Architecture hardening — timing, lineage validation, SAML, revocation | ✅ done |
+| 8 | Production hardening — encryption at rest, durable sessions, bug fixes | ✅ done |
+| 9 | Tauri GUI, full DR runbook, compliance audit log export | next |
 
 See [ATLAS_implementation_plan.md](ATLAS_implementation_plan.md) for the
 full task breakdown and dependency graph.
