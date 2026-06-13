@@ -4,6 +4,7 @@ use crate::quota::{Quota, Usage};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tracing;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tenant {
@@ -43,7 +44,10 @@ impl TenantRegistry {
     }
 
     pub fn get(&self, id: &str) -> Option<Tenant> {
-        self.tenants.lock().ok()?.get(id).cloned()
+        match self.tenants.lock() {
+            Ok(m) => m.get(id).cloned(),
+            Err(_) => { tracing::error!("tenants mutex poisoned — get() returning None"); None }
+        }
     }
 
     pub fn set_usage(&self, usage: Usage) -> Result<(), String> {
@@ -53,17 +57,28 @@ impl TenantRegistry {
     }
 
     pub fn get_usage(&self, id: &str) -> Option<Usage> {
-        self.usage.lock().ok()?.get(id).cloned()
+        match self.usage.lock() {
+            Ok(m) => m.get(id).cloned(),
+            Err(_) => { tracing::error!("usage mutex poisoned — get_usage() returning None"); None }
+        }
     }
 
     pub fn list(&self) -> Vec<Tenant> {
-        self.tenants.lock().map(|m| m.values().cloned().collect()).unwrap_or_default()
+        match self.tenants.lock() {
+            Ok(m) => m.values().cloned().collect(),
+            Err(_) => { tracing::error!("tenants mutex poisoned — list() returning empty"); vec![] }
+        }
     }
 
     pub fn remove(&self, id: &str) -> bool {
-        let removed = self.tenants.lock().ok().map(|mut m| m.remove(id).is_some()).unwrap_or(false);
+        let removed = match self.tenants.lock() {
+            Ok(mut m) => m.remove(id).is_some(),
+            Err(_) => { tracing::error!("tenants mutex poisoned — remove() had no effect"); return false; }
+        };
         if removed {
-            let _ = self.usage.lock().map(|mut m| m.remove(id));
+            if let Err(_) = self.usage.lock().map(|mut m| { m.remove(id); }) {
+                tracing::error!("usage mutex poisoned — usage entry for {id} not removed");
+            }
         }
         removed
     }

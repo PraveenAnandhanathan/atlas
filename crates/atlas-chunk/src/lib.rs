@@ -10,6 +10,9 @@
 //! Phase 2 adds a networked [`ChunkStore`] over gRPC + CRAQ chains
 //! (plan T2.1, T2.4) behind the same trait.
 
+pub mod encrypted;
+pub use encrypted::EncryptedChunkStore;
+
 use atlas_core::{Error, Hash, Result};
 use std::fs;
 use std::io::{Read, Write};
@@ -158,6 +161,28 @@ impl ChunkStore for LocalChunkStore {
         let root = self.root.clone();
         let iter = iter_chunk_hashes(root);
         Box::new(iter)
+    }
+}
+
+impl LocalChunkStore {
+    /// Store arbitrary `bytes` under a pre-computed `hash` without re-hashing.
+    /// Used by `EncryptedChunkStore` to persist ciphertext under the plaintext hash.
+    pub(crate) fn put_raw(&self, hash: Hash, bytes: &[u8]) -> Result<()> {
+        let path = self.path_for(&hash);
+        if path.exists() {
+            return Ok(());
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let tmp = path.with_extension("tmp");
+        {
+            let mut f = fs::File::create(&tmp)?;
+            f.write_all(bytes)?;
+            f.sync_all()?;
+        }
+        fs::rename(&tmp, &path)?;
+        Ok(())
     }
 }
 

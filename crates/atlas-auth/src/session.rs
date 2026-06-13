@@ -1,4 +1,10 @@
 //! Short-lived session tokens issued after successful OIDC/SAML login (T7.3).
+//!
+//! # Session profiles
+//!
+//! [`SessionConfig`] captures the TTL and policy for different deployment
+//! contexts.  Use `SessionConfig::enterprise()` for corporate SSO deployments
+//! and `SessionConfig::personal()` for consumer / developer use.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -24,6 +30,49 @@ pub enum AuthMethod {
     Oidc,
     Saml,
     ApiKey,
+}
+
+/// Session TTL and policy configuration for different deployment contexts.
+///
+/// # Worldwide deployment guidance
+///
+/// | Profile | TTL | Audience |
+/// |---------|-----|----------|
+/// | Enterprise | 8 h | Corporate SSO, short-lived for compliance |
+/// | Personal | 30 d | Consumer / developer, long-lived for UX |
+/// | ApiKey | 90 d | Non-interactive service accounts |
+/// | Kiosk | 1 h | Shared/public terminals, minimal trust |
+#[derive(Debug, Clone)]
+pub struct SessionConfig {
+    /// How long a newly issued session remains valid.
+    pub ttl_ms: u64,
+    /// Whether sessions can be refreshed before expiry.
+    pub allow_refresh: bool,
+    /// Maximum concurrent sessions per principal (0 = unlimited).
+    pub max_per_principal: usize,
+}
+
+impl SessionConfig {
+    /// Corporate SSO: 8-hour sessions, up to 5 concurrent, refresh allowed.
+    pub fn enterprise() -> Self {
+        Self { ttl_ms: 8 * 3_600_000, allow_refresh: true, max_per_principal: 5 }
+    }
+    /// Consumer / developer: 30-day sessions, up to 20 concurrent.
+    pub fn personal() -> Self {
+        Self { ttl_ms: 30 * 24 * 3_600_000, allow_refresh: true, max_per_principal: 20 }
+    }
+    /// Non-interactive API keys: 90-day sessions, no refresh needed.
+    pub fn api_key() -> Self {
+        Self { ttl_ms: 90 * 24 * 3_600_000, allow_refresh: false, max_per_principal: 100 }
+    }
+    /// Shared kiosk terminals: 1-hour sessions, 1 at a time, no refresh.
+    pub fn kiosk() -> Self {
+        Self { ttl_ms: 3_600_000, allow_refresh: false, max_per_principal: 1 }
+    }
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self { Self::enterprise() }
 }
 
 impl AuthSession {
@@ -60,20 +109,36 @@ impl SessionStore {
     }
 
     pub fn get(&self, token: &str) -> Option<AuthSession> {
-        let store = self.sessions.lock().ok()?;
-        let s = store.get(token)?;
-        if s.is_expired() { None } else { Some(s.clone()) }
+        match self.sessions.lock() {
+            Ok(store) => {
+                let s = store.get(token)?;
+                if s.is_expired() { None } else { Some(s.clone()) }
+            }
+            Err(_) => {
+                tracing::error!("session store mutex poisoned — get() returning None");
+                None
+            }
+        }
     }
 
     pub fn revoke(&self, token: &str) -> bool {
-        self.sessions.lock().ok().map(|mut s| s.remove(token).is_some()).unwrap_or(false)
+        match self.sessions.lock() {
+            Ok(mut s) => s.remove(token).is_some(),
+            Err(_) => {
+                tracing::error!("session store mutex poisoned — revoke() had no effect");
+                false
+            }
+        }
     }
 
     /// Remove all expired sessions.
     pub fn purge_expired(&self) -> usize {
         let mut store = match self.sessions.lock() {
             Ok(s) => s,
-            Err(_) => return 0,
+            Err(_) => {
+                tracing::error!("session store mutex poisoned — purge_expired() skipped");
+                return 0;
+            }
         };
         let before = store.len();
         store.retain(|_, s| !s.is_expired());
@@ -81,7 +146,13 @@ impl SessionStore {
     }
 
     pub fn active_count(&self) -> usize {
-        self.sessions.lock().map(|s| s.values().filter(|sess| !sess.is_expired()).count()).unwrap_or(0)
+        match self.sessions.lock() {
+            Ok(s) => s.values().filter(|sess| !sess.is_expired()).count(),
+            Err(_) => {
+                tracing::error!("session store mutex poisoned — active_count() returning 0");
+                0
+            }
+        }
     }
 }
 

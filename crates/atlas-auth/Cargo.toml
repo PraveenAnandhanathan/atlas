@@ -24,6 +24,7 @@ quick-xml.workspace = true
 rsa.workspace = true
 base64.workspace = true
 reqwest = { workspace = true }
+sled.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
