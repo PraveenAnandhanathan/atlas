@@ -222,6 +222,16 @@ impl CapabilityCore {
 
     /// Single dispatch: parse `name`, run the pipeline, return JSON.
     pub fn invoke(&self, principal: &str, name: &str, args: &Value) -> InvokeResult {
+        // P7/P8: validate principal at the entry point before any audit or policy work.
+        if principal.is_empty() {
+            return Err(ApiError::invalid("principal must not be empty"));
+        }
+        if principal.len() > 256 {
+            return Err(ApiError::invalid("principal exceeds 256-character limit"));
+        }
+        if principal.contains('\0') {
+            return Err(ApiError::invalid("principal must not contain null bytes"));
+        }
         let Some(cap) = crate::parse_capability(name) else {
             return Err(ApiError::invalid(format!("unknown capability: {name}")));
         };
@@ -335,7 +345,13 @@ impl CapabilityCore {
                 let content = req_str(args, "content")?;
                 self.check_scope(&path)?;
                 self.check_policy(principal, &path, Permission::Write)?;
-                let mut existing = self.fs.read(&path).unwrap_or_default();
+                // P8: propagate read errors instead of silently starting from empty.
+                // unwrap_or_default() would truncate the file on any read failure.
+                let mut existing = match self.fs.read(&path) {
+                    Ok(b) => b,
+                    Err(atlas_core::Error::NotFound(_)) => Vec::new(),
+                    Err(e) => return Err(map_fs_err(e)),
+                };
                 existing.extend_from_slice(content.as_bytes());
                 let e = self.fs.write(&path, &existing).map_err(map_fs_err)?;
                 Ok(json!({"path": e.path, "hash": e.hash.to_hex(), "size": e.size}))

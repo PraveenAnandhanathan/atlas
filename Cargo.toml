@@ -133,6 +133,10 @@ libloading = "0.8"
 base64 = "0.22"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
+# Phase 8 — Encryption at rest and enterprise design
+aes-gcm = "0.10"
+hkdf = "0.12"
+
 # Internal crates, referenced by siblings
 atlas-core = { path = "crates/atlas-core", version = "0.1.0" }
 atlas-chunk = { path = "crates/atlas-chunk", version = "0.1.0" }

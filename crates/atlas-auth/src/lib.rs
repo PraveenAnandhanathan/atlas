@@ -22,6 +22,7 @@ pub mod oidc;
 pub mod saml;
 pub mod scim;
 pub mod session;
+pub mod session_sled;
 
 pub use oidc::{OidcConfig, OidcError, TokenClaims};
 pub use saml::{SamlAssertion, SamlConfig, SamlError};

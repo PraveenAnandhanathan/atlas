@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tracing;
 
 /// A SCIM user resource.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,7 +48,10 @@ impl ScimServer {
     }
 
     pub fn get_user(&self, id: &str) -> Option<ScimUser> {
-        self.users.lock().ok()?.get(id).cloned()
+        match self.users.lock() {
+            Ok(s) => s.get(id).cloned(),
+            Err(_) => { tracing::error!("scim users mutex poisoned — get_user returning None"); None }
+        }
     }
 
     pub fn update_user(&self, user: ScimUser) -> Result<ScimUser, String> {
@@ -67,7 +71,10 @@ impl ScimServer {
     }
 
     pub fn list_users(&self) -> Vec<ScimUser> {
-        self.users.lock().map(|s| s.values().cloned().collect()).unwrap_or_default()
+        match self.users.lock() {
+            Ok(s) => s.values().cloned().collect(),
+            Err(_) => { tracing::error!("scim users mutex poisoned — list_users returning empty"); vec![] }
+        }
     }
 
     // ── Groups ───────────────────────────────────────────────────────────
@@ -79,7 +86,10 @@ impl ScimServer {
     }
 
     pub fn get_group(&self, id: &str) -> Option<ScimGroup> {
-        self.groups.lock().ok()?.get(id).cloned()
+        match self.groups.lock() {
+            Ok(s) => s.get(id).cloned(),
+            Err(_) => { tracing::error!("scim groups mutex poisoned — get_group returning None"); None }
+        }
     }
 
     pub fn add_member(&self, group_id: &str, user_id: &str) -> Result<(), String> {
@@ -99,7 +109,10 @@ impl ScimServer {
     }
 
     pub fn list_groups(&self) -> Vec<ScimGroup> {
-        self.groups.lock().map(|s| s.values().cloned().collect()).unwrap_or_default()
+        match self.groups.lock() {
+            Ok(s) => s.values().cloned().collect(),
+            Err(_) => { tracing::error!("scim groups mutex poisoned — list_groups returning empty"); vec![] }
+        }
     }
 }
 

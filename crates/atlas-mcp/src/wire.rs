@@ -70,6 +70,12 @@ impl McpResponse {
     }
 }
 
+/// Hardcoded fallback emitted when `McpResponse` itself fails to serialize.
+/// This should never happen in practice (all fields are primitives/Values),
+/// but an empty response would silently drop the error from the client.
+const SERIALIZATION_ERROR: &str =
+    r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"internal: response serialization failed"}}"#;
+
 /// Process one JSON-RPC line and return its serialised response.
 pub fn handle_line(core: &CapabilityCore, line: &str) -> String {
     let req: McpRequest = match serde_json::from_str(line) {
@@ -81,11 +87,12 @@ pub fn handle_line(core: &CapabilityCore, line: &str) -> String {
                 result: None,
                 error: Some(RpcError { code: -32700, message: format!("parse: {e}") }),
             };
-            return serde_json::to_string(&resp).unwrap_or_default();
+            return serde_json::to_string(&resp)
+                .unwrap_or_else(|_| SERIALIZATION_ERROR.to_string());
         }
     };
     let resp = handle(core, req);
-    serde_json::to_string(&resp).unwrap_or_default()
+    serde_json::to_string(&resp).unwrap_or_else(|_| SERIALIZATION_ERROR.to_string())
 }
 
 fn handle(core: &CapabilityCore, req: McpRequest) -> McpResponse {
