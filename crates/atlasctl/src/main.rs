@@ -1293,6 +1293,7 @@ fn cmd_redact(
         redact_email: email,
         redact_ssn: ssn,
         redact_api_keys: api_keys,
+        redact_phone: false,
         custom_patterns: vec![],
     };
     let engine = RedactEngine::new(&cfg).map_err(|e| anyhow!("build redactor: {e}"))?;

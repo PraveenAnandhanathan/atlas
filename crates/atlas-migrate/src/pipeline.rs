@@ -82,10 +82,10 @@ impl MigrationStats {
 
 /// Run a migration, writing every transferred object into `fs`.
 ///
-/// For `Ext4` sources this performs real file I/O. For cloud sources
-/// (`S3`, `GCS`, `git-lfs`) `fetch_object` returns an error because the
-/// network clients are not yet wired; those objects are recorded as failed
-/// rather than silently skipped.
+/// Supported sources: `Ext4` (local file I/O), `S3` (HTTP GET with
+/// `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars), `GCS` (uses
+/// `GCS_ACCESS_TOKEN` env var), and `git-lfs` (Batch API).  Failed
+/// objects are recorded individually and do not abort the run.
 pub fn run(config: &MigrationConfig, fs: &Fs) -> (Vec<TransferResult>, MigrationStats) {
     let objects = enumerate(&config.source, 1_000);
     let mut results = Vec::with_capacity(objects.len());

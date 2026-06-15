@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use tracing::{error, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct VectorEntry {
@@ -105,8 +106,22 @@ impl VectorStore {
         self.flush()
     }
 
-    /// Cosine similarity nearest-neighbour search (brute-force).
+    /// Cosine similarity nearest-neighbour search (brute-force O(n)).
     pub fn search(&self, query: &[f32], limit: usize) -> Result<Vec<SearchResult>> {
+        let n = self.entries.len();
+        if n > 250_000 {
+            error!(
+                documents = n,
+                "vector store exceeds 250 000 documents; O(n) brute-force search will be \
+                 extremely slow — migrate to an ANN index (DiskANN/HNSW)"
+            );
+        } else if n > 50_000 {
+            warn!(
+                documents = n,
+                "vector store has more than 50 000 documents; O(n) brute-force search \
+                 latency may be unacceptable — consider upgrading to DiskANN/HNSW"
+            );
+        }
         if query.is_empty() || self.entries.is_empty() {
             return Ok(vec![]);
         }
@@ -151,6 +166,15 @@ impl VectorStore {
         }
         self.flush()?;
         Ok(count)
+    }
+
+    /// Look up a stored embedding by logical path.
+    /// Returns the embedding of the first non-empty match, or `None`.
+    pub fn get_embedding_by_path(&self, path: &str) -> Option<Vec<f32>> {
+        self.entries
+            .iter()
+            .find(|e| e.path == path && !e.embedding.is_empty())
+            .map(|e| e.embedding.clone())
     }
 
     /// Return (hash, path) for stale entries (T3.7).

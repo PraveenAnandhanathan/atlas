@@ -59,6 +59,21 @@ impl ReplicatedChunkStore {
         self.chain.is_empty()
     }
 
+    /// Probe every replica with a lightweight `has` call and return per-node
+    /// results.  `Ok(())` means the node responded; `Err` means it is
+    /// unreachable or returned an unexpected error.
+    pub fn health_check(&self) -> Vec<Result<()>> {
+        self.chain
+            .iter()
+            .enumerate()
+            .map(|(i, node)| {
+                node.has(&atlas_core::Hash::ZERO)
+                    .map(|_| ())
+                    .map_err(|e| Error::Backend(format!("replica node {i} is unreachable: {e}")))
+            })
+            .collect()
+    }
+
     pub fn role_at(&self, idx: usize) -> ChainRole {
         if self.chain.len() == 1 {
             ChainRole::Singleton

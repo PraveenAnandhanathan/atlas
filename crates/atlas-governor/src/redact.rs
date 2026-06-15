@@ -1,7 +1,8 @@
 //! Read-time PII redaction engine (T4.6).
 //!
-//! Detects and masks emails, US SSNs, common API key formats, and
-//! arbitrary caller-supplied regex patterns.
+//! Detects and masks emails, US SSNs, US phone numbers, common API key
+//! formats (OpenAI sk-, GitHub ghp_, Slack xox*, AWS AKIA, npm_, GitLab
+//! glpat-), PEM private keys, and arbitrary caller-supplied regex patterns.
 
 use crate::Result;
 use regex::Regex;
@@ -12,6 +13,7 @@ pub struct RedactConfig {
     pub redact_email: bool,
     pub redact_ssn: bool,
     pub redact_api_keys: bool,
+    pub redact_phone: bool,
     /// Additional (pattern, replacement) pairs.
     pub custom_patterns: Vec<(String, String)>,
 }
@@ -23,6 +25,7 @@ impl RedactConfig {
             redact_email: true,
             redact_ssn: true,
             redact_api_keys: true,
+            redact_phone: true,
             custom_patterns: vec![],
         }
     }
@@ -44,22 +47,35 @@ impl RedactEngine {
             ));
         }
         if config.redact_ssn {
+            // Covers hyphen-separated (123-45-6789) and space-separated (123 45 6789).
             patterns.push((
-                Regex::new(r"\b\d{3}-\d{2}-\d{4}\b")?,
+                Regex::new(r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b")?,
                 "[REDACTED_SSN]".into(),
             ));
         }
         if config.redact_api_keys {
             patterns.push((
                 Regex::new(
-                    r"(?i)\b(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{36,}|xoxb-[A-Za-z0-9\-]+)",
+                    r"(?i)\b(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{36,}|xoxb-[A-Za-z0-9\-]+|xoxp-[A-Za-z0-9\-]+|xoxa-[A-Za-z0-9\-]+|AKIA[0-9A-Z]{16}|npm_[A-Za-z0-9]{36,}|glpat-[A-Za-z0-9_\-]{20,})",
                 )?,
                 "[REDACTED_API_KEY]".into(),
             ));
-            // Bearer token
+            // PEM private key headers
+            patterns.push((
+                Regex::new(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----")?,
+                "[REDACTED_PEM_KEY]".into(),
+            ));
+            // Bearer / Authorization tokens
             patterns.push((
                 Regex::new(r"(?i)Bearer\s+[A-Za-z0-9\-._~+/]+=*")?,
                 "[REDACTED_BEARER]".into(),
+            ));
+        }
+        if config.redact_phone {
+            // US phone numbers: (123) 456-7890, 123-456-7890, +1 123.456.7890, etc.
+            patterns.push((
+                Regex::new(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b")?,
+                "[REDACTED_PHONE]".into(),
             ));
         }
         for (pat, repl) in &config.custom_patterns {
@@ -139,5 +155,53 @@ mod tests {
         let e = RedactEngine::new(&cfg).unwrap();
         let out = e.redact("See PROJECT-1234 for details.");
         assert!(out.contains("[TICKET]"));
+    }
+
+    #[test]
+    fn redact_ssn_space_separated() {
+        let e = RedactEngine::new(&RedactConfig {
+            redact_ssn: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let out = e.redact("SSN: 123 45 6789");
+        assert!(!out.contains("123 45 6789"));
+        assert!(out.contains("[REDACTED_SSN]"));
+    }
+
+    #[test]
+    fn redact_aws_akia_key() {
+        let e = RedactEngine::new(&RedactConfig {
+            redact_api_keys: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let out = e.redact("key=AKIAIOSFODNN7EXAMPLE");
+        assert!(!out.contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(out.contains("[REDACTED_API_KEY]"));
+    }
+
+    #[test]
+    fn redact_pem_key() {
+        let e = RedactEngine::new(&RedactConfig {
+            redact_api_keys: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let out = e.redact("-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----");
+        assert!(!out.contains("BEGIN RSA PRIVATE KEY"));
+        assert!(out.contains("[REDACTED_PEM_KEY]"));
+    }
+
+    #[test]
+    fn redact_us_phone() {
+        let e = RedactEngine::new(&RedactConfig {
+            redact_phone: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let out = e.redact("Call us at (555) 867-5309 anytime.");
+        assert!(!out.contains("867-5309"));
+        assert!(out.contains("[REDACTED_PHONE]"));
     }
 }

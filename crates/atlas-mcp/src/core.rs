@@ -17,7 +17,7 @@ use crate::Capability;
 use atlas_core::{Author, Hash, ObjectKind};
 use atlas_fs::Fs;
 use atlas_governor::{
-    policy::{AccessRequest, Decision, Permission, PolicyEngine},
+    policy::{AccessRequest, Decision, Effect, Permission, Policy, PolicyEngine, Rule},
     AuditLog, RedactEngine, TokenAuthority,
 };
 use atlas_indexer::{AtlasIndex, HybridQuery};
@@ -347,9 +347,90 @@ impl CapabilityCore {
                 }
                 Ok(json!({"text": text, "size": bytes.len()}))
             }
-            fs_read_tensor | fs_read_schema => Err(ApiError::not_implemented(
+            fs_read_tensor => Err(ApiError::not_implemented(
                 "format-aware reads land with the format-plugin work in §15.5",
             )),
+            fs_read_schema => {
+                let path = req_str(args, "path")?;
+                self.check_scope(&path)?;
+                self.check_policy(principal, &path, Permission::Read)?;
+                let bytes = self.fs.read(&path).map_err(map_fs_err)?;
+                let ext = std::path::Path::new(&path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                match ext.as_str() {
+                    "json" | "jsonl" => {
+                        // Try to parse as JSON and extract top-level keys + types
+                        let text = String::from_utf8_lossy(&bytes);
+                        // For JSONL, try first non-empty line; for JSON try the whole thing
+                        let first_val: Option<serde_json::Value> = if ext == "jsonl" {
+                            text.lines()
+                                .find(|l| !l.trim().is_empty())
+                                .and_then(|l| serde_json::from_str(l).ok())
+                        } else {
+                            serde_json::from_str(&text).ok()
+                        };
+                        match first_val {
+                            Some(serde_json::Value::Object(map)) => {
+                                let fields: Vec<serde_json::Value> = map
+                                    .iter()
+                                    .map(|(k, v)| {
+                                        let type_name = match v {
+                                            serde_json::Value::Null => "null",
+                                            serde_json::Value::Bool(_) => "boolean",
+                                            serde_json::Value::Number(_) => "number",
+                                            serde_json::Value::String(_) => "string",
+                                            serde_json::Value::Array(_) => "array",
+                                            serde_json::Value::Object(_) => "object",
+                                        };
+                                        json!({"name": k, "type": type_name})
+                                    })
+                                    .collect();
+                                Ok(json!({"format": "json", "fields": fields}))
+                            }
+                            _ => Ok(json!({
+                                "format": "json",
+                                "fields": [],
+                                "note": "could not parse as JSON object"
+                            })),
+                        }
+                    }
+                    "csv" | "tsv" => {
+                        let sep = if ext == "tsv" { '\t' } else { ',' };
+                        let text = String::from_utf8_lossy(&bytes);
+                        let first_line = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+                        let columns: Vec<&str> = first_line.split(sep).collect();
+                        Ok(json!({"format": ext.as_str(), "columns": columns}))
+                    }
+                    "parquet" => {
+                        // Parquet magic bytes: PAR1 at start and end
+                        let is_parquet = bytes.len() >= 4 && &bytes[..4] == b"PAR1";
+                        if is_parquet {
+                            Ok(json!({
+                                "format": "parquet",
+                                "note": "parquet schema extraction requires parquet reader; magic bytes confirmed"
+                            }))
+                        } else {
+                            Ok(json!({"format": "unknown", "path": path, "size": bytes.len()}))
+                        }
+                    }
+                    "arrow" => {
+                        // Arrow IPC magic: b"ARROW1" (6 bytes)
+                        let is_arrow = bytes.len() >= 6 && &bytes[..6] == b"ARROW1";
+                        if is_arrow {
+                            Ok(json!({
+                                "format": "arrow",
+                                "note": "arrow schema extraction requires arrow reader; magic bytes confirmed"
+                            }))
+                        } else {
+                            Ok(json!({"format": "unknown", "path": path, "size": bytes.len()}))
+                        }
+                    }
+                    _ => Ok(json!({"format": "unknown", "path": path, "size": bytes.len()})),
+                }
+            }
             // -- FS writes ---------------------------------------------
             fs_write => {
                 let path = req_str(args, "path")?;
@@ -423,21 +504,67 @@ impl CapabilityCore {
                 let path = req_str(args, "path")?;
                 self.check_scope(&path)?;
                 self.check_policy(principal, &path, Permission::Read)?;
-                Err(ApiError::not_implemented(
-                    "similar() requires a stored embedding; wire via embedder service",
-                ))
+                let limit = args
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10) as usize;
+                let idx = self.index_lock()?;
+                let embedding = idx
+                    .vectors
+                    .get_embedding_by_path(&path)
+                    .ok_or_else(|| ApiError::not_found(
+                        "path has no stored embedding; ingest with an embedder first"
+                    ))?;
+                let results = idx
+                    .search_vector(&embedding, limit)
+                    .map_err(|e| ApiError::internal(e.to_string()))?;
+                Ok(json!(results
+                    .into_iter()
+                    .map(|r| json!({
+                        "path": r.path,
+                        "hash": r.file_hash.to_hex(),
+                        "score": r.score,
+                    }))
+                    .collect::<Vec<_>>()))
             }
             semantic_embed => {
                 let path = req_str(args, "path")?;
                 self.check_scope(&path)?;
                 self.check_policy(principal, &path, Permission::Read)?;
-                Err(ApiError::not_implemented(
-                    "embed() requires the embedder service from §15.6",
-                ))
+                let idx = self.index_lock()?;
+                let embedding = idx
+                    .vectors
+                    .get_embedding_by_path(&path)
+                    .ok_or_else(|| ApiError::not_found(
+                        "path has no stored embedding; ingest with an embedder first"
+                    ))?;
+                let dimensions = embedding.len();
+                Ok(json!({
+                    "path": path,
+                    "embedding": embedding,
+                    "dimensions": dimensions,
+                }))
             }
-            semantic_describe => Err(ApiError::not_implemented(
-                "describe() requires the embedder service",
-            )),
+            semantic_describe => {
+                let path = req_str(args, "path")?;
+                self.check_scope(&path)?;
+                self.check_policy(principal, &path, Permission::Read)?;
+                let bytes = self.fs.read(&path).map_err(map_fs_err)?;
+                let text = String::from_utf8_lossy(&bytes);
+                // Take first 500 chars as preview, trim whitespace
+                let preview_raw: String = text.chars().take(500).collect();
+                let mut preview = preview_raw.trim().to_string();
+                if let Some(r) = &self.redactor {
+                    preview = r.redact(&preview);
+                }
+                let chars = preview.chars().count();
+                Ok(json!({
+                    "path": path,
+                    "preview": preview,
+                    "size": bytes.len(),
+                    "chars": chars,
+                }))
+            }
 
             // -- Versioning --------------------------------------------
             version_log => {
@@ -698,9 +825,69 @@ impl CapabilityCore {
                     .map_err(|e| ApiError::internal(e.to_string()))?;
                 Ok(json!(entries))
             }
-            policy_set => Err(ApiError::not_implemented(
-                "policy.set requires elevated capability and YAML store; deferred",
-            )),
+            policy_set => {
+                let pattern = req_str(args, "path_pattern")?;
+                let principals: Vec<String> = args
+                    .get("principals")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_else(|| vec!["*".to_string()]);
+                let perms_raw: Vec<String> = args
+                    .get("permissions")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let perms: Vec<Permission> = perms_raw
+                    .iter()
+                    .filter_map(|s| s.parse::<Permission>().ok())
+                    .collect();
+                if perms.is_empty() {
+                    return Err(ApiError::invalid(
+                        "permissions must be a non-empty array of read/write/delete/list",
+                    ));
+                }
+                let effect = match args
+                    .get("effect")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("allow")
+                {
+                    "deny" => Effect::Deny,
+                    _ => Effect::Allow,
+                };
+                let policy_file = req_str(args, "policy_file")?;
+                let rule = Rule {
+                    path_pattern: pattern.clone(),
+                    principals,
+                    permissions: perms,
+                    effect,
+                };
+                // Load existing policy or start fresh
+                let mut policy = if std::path::Path::new(&policy_file).exists() {
+                    Policy::load(&policy_file)
+                        .map_err(|e| ApiError::internal(e.to_string()))?
+                } else {
+                    Policy { version: "1".into(), rules: vec![] }
+                };
+                policy.rules.push(rule.clone());
+                let yaml = serde_yaml::to_string(&policy)
+                    .map_err(|e| ApiError::internal(e.to_string()))?;
+                let tmp = format!("{policy_file}.tmp");
+                std::fs::write(&tmp, &yaml)
+                    .map_err(|e| ApiError::internal(e.to_string()))?;
+                std::fs::rename(&tmp, &policy_file)
+                    .map_err(|e| ApiError::internal(e.to_string()))?;
+                Ok(json!({
+                    "added": true,
+                    "rule": {
+                        "path_pattern": rule.path_pattern,
+                        "principals": rule.principals,
+                        "permissions": rule.permissions.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
+                        "effect": match &rule.effect {
+                            Effect::Allow => "allow",
+                            Effect::Deny => "deny",
+                        },
+                        "policy_file": policy_file,
+                    }
+                }))
+            }
 
             // -- Agent / workflow --------------------------------------
             agent_scratchpad_create => {

@@ -12,7 +12,7 @@
 //!   parquet, arrow, zarr, png/jpg, mp3/wav, safetensors/gguf
 
 use std::str;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Detect the file format from path + bytes and return extracted text.
 pub fn extract_text(path: &str, bytes: &[u8]) -> String {
@@ -181,6 +181,30 @@ fn extract_xml_text(xml: &str, out: &mut String) {
 /// unencrypted PDFs with straightforward text streams. Encrypted PDFs and PDFs
 /// with embedded CJK fonts return whatever printable ASCII is visible in the stream.
 fn extract_pdf(bytes: &[u8]) -> String {
+    // Detect encrypted PDFs (the `/Encrypt` dictionary entry appears near the
+    // cross-reference table at the end of the file, but may also appear early
+    // in the object dictionary). We scan the first 64 KiB for a quick check.
+    let probe = &bytes[..bytes.len().min(65_536)];
+    if find_subsequence(probe, b"/Encrypt").is_some() {
+        warn!(
+            "PDF appears to be encrypted; text extraction will be incomplete — \
+             only unencrypted content streams are scanned"
+        );
+    }
+    // Image-only PDFs produce empty BT…ET blocks; warn when the file is non-trivial
+    // but extraction yields nothing meaningful.
+    let result = _extract_pdf_inner(bytes);
+    if result.trim().is_empty() && bytes.len() > 4096 {
+        warn!(
+            bytes = bytes.len(),
+            "PDF extraction returned no text; the file may be image-only, \
+             use a non-Latin font, or have a layout not supported by the BT…ET scanner"
+        );
+    }
+    result
+}
+
+fn _extract_pdf_inner(bytes: &[u8]) -> String {
     // Find all content streams by looking for `stream\r\n` / `stream\n` markers.
     let mut out = String::new();
     let mut pos = 0;
@@ -299,6 +323,10 @@ fn extract_pdf_stream(data: &[u8], out: &mut String) {
 /// (schema) is a list of `SchemaElement` objects each having a `name` string.
 /// We do a lightweight scan: find all length-prefixed UTF-8 strings near the footer.
 fn extract_parquet_schema(bytes: &[u8]) -> String {
+    warn!(
+        "Parquet extraction is schema-only (column names); row data is not indexed — \
+         semantic search over Parquet content will not find individual record values"
+    );
     // Verify magic: first 4 bytes must be "PAR1".
     if bytes.len() < 8 || &bytes[..4] != b"PAR1" {
         return String::new();
@@ -329,6 +357,10 @@ fn extract_parquet_schema(bytes: &[u8]) -> String {
 /// Arrow IPC files start with `ARROW1` (6 bytes) or `ARROW2` magic.
 /// The schema is in the first message. We scan for length-prefixed strings.
 fn extract_arrow_schema(bytes: &[u8]) -> String {
+    warn!(
+        "Arrow/IPC extraction is schema-only (column names); row data is not indexed — \
+         semantic search over Arrow content will not find individual record values"
+    );
     const ARROW_MAGIC: &[u8] = b"ARROW1";
     if bytes.len() < 6 || &bytes[..6] != ARROW_MAGIC {
         return String::new();

@@ -12,16 +12,28 @@ pub struct ChaosRunner {
     pub dry_run: bool,
     /// Optional local store used for single-node invariant checks.
     pub fs: Option<Arc<Fs>>,
+    /// Network addresses of cluster nodes, used for distributed invariant checks.
+    pub node_addresses: Vec<String>,
 }
 
 impl ChaosRunner {
     pub fn new(dry_run: bool) -> Self {
-        Self { dry_run, fs: None }
+        Self {
+            dry_run,
+            fs: None,
+            node_addresses: Vec::new(),
+        }
     }
 
     /// Attach a local store to enable real single-node integrity checks.
     pub fn with_fs(mut self, fs: Fs) -> Self {
         self.fs = Some(Arc::new(fs));
+        self
+    }
+
+    /// Set the cluster node addresses for network-level invariant checks.
+    pub fn with_nodes(mut self, addrs: Vec<String>) -> Self {
+        self.node_addresses = addrs;
         self
     }
 
@@ -114,12 +126,68 @@ impl ChaosRunner {
                 Ok(!report.violations.is_empty())
             }
             InvariantKind::GcSafety => self.check_gc_safety(),
-            // Network-level invariants require a distributed cluster;
-            // not yet wired for single-node runs.
-            InvariantKind::NoSplitBrain
-            | InvariantKind::ReplicationFactorMaintained { .. }
-            | InvariantKind::NoSilentCorruption
-            | InvariantKind::MetadataLinearisable => Ok(false),
+            InvariantKind::NoSplitBrain => self.check_no_split_brain(),
+            InvariantKind::ReplicationFactorMaintained { min_replicas } => {
+                self.check_replication_factor(*min_replicas)
+            }
+            InvariantKind::NoSilentCorruption => self.check_chunk_integrity(),
+            InvariantKind::MetadataLinearisable => {
+                if self.node_addresses.is_empty() {
+                    // Single-node: always linearisable.
+                    return Ok(false);
+                }
+                // Quorum (majority) must be reachable for linearisability guarantee.
+                let live = self
+                    .node_addresses
+                    .iter()
+                    .filter(|addr| {
+                        atlas_net::ClientRuntime::connect(addr.as_str()).is_ok()
+                    })
+                    .count();
+                let quorum = self.node_addresses.len() / 2 + 1;
+                if live < quorum {
+                    warn!(live, quorum, "quorum unreachable — linearisability not guaranteed");
+                }
+                Ok(live < quorum)
+            }
+        }
+    }
+
+    /// Check that at least `required` nodes are reachable (replication factor).
+    fn check_replication_factor(&self, required: usize) -> Result<bool, String> {
+        if self.node_addresses.is_empty() {
+            return Ok(false); // no addresses configured — skip
+        }
+        let live = self
+            .node_addresses
+            .iter()
+            .filter(|addr| atlas_net::ClientRuntime::connect(addr.as_str()).is_ok())
+            .count();
+        if live < required {
+            warn!(live, required, "replication factor below minimum");
+            Ok(true) // violated
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Check for potential split-brain: any node unreachable while others are up.
+    fn check_no_split_brain(&self) -> Result<bool, String> {
+        if self.node_addresses.len() < 2 {
+            return Ok(false);
+        }
+        let reachable: Vec<bool> = self
+            .node_addresses
+            .iter()
+            .map(|addr| atlas_net::ClientRuntime::connect(addr.as_str()).is_ok())
+            .collect();
+        let live = reachable.iter().filter(|&&r| r).count();
+        let dead = reachable.len() - live;
+        if dead > 0 && live > 0 {
+            warn!(live, dead, "some nodes unreachable — potential split-brain");
+            Ok(true)
+        } else {
+            Ok(false)
         }
     }
 

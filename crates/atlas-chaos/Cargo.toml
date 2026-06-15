@@ -14,6 +14,7 @@ atlas-core.workspace = true
 atlas-chunk.workspace = true
 atlas-fs.workspace = true
 atlas-gc.workspace = true
+atlas-net.workspace = true
 atlas-storage.workspace = true
 atlas-meta.workspace = true
 atlas-replicate.workspace = true

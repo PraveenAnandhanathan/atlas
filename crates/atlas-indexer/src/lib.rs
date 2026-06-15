@@ -113,8 +113,13 @@ impl AtlasIndex {
     pub fn index_document(&mut self, doc: &Document) -> Result<()> {
         self.text.index(doc)?;
         if !doc.embedding.is_empty() {
-            self.vectors
-                .upsert(&doc.file_hash, &doc.embedding, &doc.path, &doc.xattrs)?;
+            self.vectors.upsert_with_model(
+                &doc.file_hash,
+                &doc.embedding,
+                &doc.path,
+                &doc.xattrs,
+                &doc.model_version,
+            )?;
         }
         Ok(())
     }

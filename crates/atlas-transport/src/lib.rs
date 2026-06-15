@@ -588,24 +588,15 @@ pub mod rdma {
     #[async_trait]
     impl Acceptor for RdmaAcceptor {
         async fn accept(&self) -> Result<(Box<dyn Stream>, SocketAddr)> {
-            let (tcp, peer) = self.listener.accept().await?;
-            // Exchange QP info over the TCP control channel.
-            let dev = RdmaDevice::open_first()
-                .map_err(|e| TransportError::Rdma(e.to_string()))?;
-            let local_lid = dev.lid(1).unwrap_or(0);
-
-            // In a full implementation:
-            // 1. Read remote QpInfo from tcp (bincode-encoded).
-            // 2. Send local QpInfo back.
-            // 3. Transition local QP to RTR/RTS using remote info.
-            // 4. Return the RdmaStream.
-            // For now we use the TCP stream as the data path fallback.
-            let _ = (local_lid, dev);
-            let _ = tcp;
-
-            // Fall back to TCP for data path until full QP wiring is in place.
-            let tcp2 = TcpStream::connect(peer).await?;
-            Ok((Box::new(tcp2), peer))
+            // Drain the underlying listener so the OS does not accumulate
+            // un-accepted connections, then return an explicit error.
+            let (_tcp, peer) = self.listener.accept().await?;
+            let _ = peer;
+            Err(TransportError::Rdma(
+                "RDMA data path is not yet implemented; \
+                 use TcpTransport for production deployments"
+                    .into(),
+            ))
         }
 
         fn local_addr(&self) -> Result<SocketAddr> {
@@ -616,21 +607,18 @@ pub mod rdma {
     #[async_trait]
     impl Transport for RdmaTransport {
         async fn connect(&self, addr: &str) -> Result<Box<dyn Stream>> {
-            let dev = RdmaDevice::open_first()?;
-            let local_lid = dev.lid(1).unwrap_or(0);
-
-            // Connect the control channel.
-            let tcp = TcpStream::connect(addr).await?;
-
-            // Exchange QP info. In a full implementation this sends/receives
-            // QpInfo structs (bincode-serialized) and then calls ibv_modify_qp
-            // to transition the local QP from RESET → INIT → RTR → RTS.
-            let _ = local_lid;
-            let _ = tcp;
-
-            // Until the full QP state machine is wired, fall through to TCP.
-            let s = TcpStream::connect(addr).await?;
-            Ok(Box::new(s))
+            let _ = addr;
+            // The QP state-machine wiring (INIT → RTR → RTS via ibv_modify_qp)
+            // is not yet complete.  Returning an explicit error here prevents
+            // silently allocating RDMA hardware resources and then falling back
+            // to plain TCP (which would waste kernel PD/QP/MR allocations and
+            // mislead callers into believing they have RDMA connectivity).
+            // Use TcpTransport for all current production deployments.
+            Err(TransportError::Rdma(
+                "RDMA data path is not yet implemented; \
+                 use TcpTransport for production deployments"
+                    .into(),
+            ))
         }
 
         async fn bind(&self, addr: &str) -> Result<Box<dyn Acceptor>> {

@@ -30,7 +30,7 @@ use formats::extract_text;
 use std::collections::HashMap;
 use std::path::Path;
 use thiserror::Error;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Error)]
 pub enum IngestError {
@@ -138,9 +138,18 @@ impl Ingester {
             text,
             embedding,
             xattrs,
-            model_version,
+            model_version: model_version.clone(),
         };
         self.index.index_document(&doc)?;
+
+        // Mark embeddings from other model versions as stale so that a
+        // re-embed job will pick them up (T3.7 / backlog 2.11).
+        if !model_version.is_empty() {
+            if let Err(e) = self.index.mark_stale_embeddings(&model_version) {
+                warn!(error = %e, "failed to mark old-model embeddings stale after ingest");
+            }
+        }
+
         info!(path, hash = %file_hash.short(), "ingested");
         Ok(file_hash)
     }
