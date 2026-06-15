@@ -60,9 +60,10 @@ impl RedactEngine {
                 )?,
                 "[REDACTED_API_KEY]".into(),
             ));
-            // PEM private key headers
+            // PEM private key blocks (header + base64 body + footer).
+            // (?s) enables DOTALL so . matches \n, covering multi-line keys.
             patterns.push((
-                Regex::new(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----")?,
+                Regex::new(r"(?s)-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----")?,
                 "[REDACTED_PEM_KEY]".into(),
             ));
             // Bearer / Authorization tokens
@@ -191,6 +192,23 @@ mod tests {
         let out = e.redact("-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----");
         assert!(!out.contains("BEGIN RSA PRIVATE KEY"));
         assert!(out.contains("[REDACTED_PEM_KEY]"));
+    }
+
+    #[test]
+    fn redact_pem_key_full_body() {
+        let e = RedactEngine::new(&RedactConfig {
+            redact_api_keys: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\nBKcwggSjAgEAAoIBAQC7\n-----END RSA PRIVATE KEY-----";
+        let out = e.redact(pem);
+        assert!(!out.contains("MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"), "key body must be redacted");
+        assert!(out.contains("[REDACTED_PEM_KEY]"));
+        // Surrounding text must survive.
+        let context = format!("key: {} end", pem);
+        let out2 = e.redact(&context);
+        assert!(out2.starts_with("key: [REDACTED_PEM_KEY] end"));
     }
 
     #[test]

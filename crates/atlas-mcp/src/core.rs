@@ -29,6 +29,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
+use tracing::{debug, warn};
 
 /// Structured error returned to every adapter.  Adapters map this to
 /// their native error envelope (HTTP status, gRPC code, S3 XML, ...).
@@ -244,21 +245,27 @@ impl CapabilityCore {
 
     /// Single dispatch: parse `name`, run the pipeline, return JSON.
     pub fn invoke(&self, principal: &str, name: &str, args: &Value) -> InvokeResult {
+        debug!(principal, capability = name, "mcp: invoke start");
         // P7/P8: validate principal at the entry point before any audit or policy work.
         if principal.is_empty() {
+            warn!("mcp: rejected — empty principal");
             return Err(ApiError::invalid("principal must not be empty"));
         }
         if principal.len() > 256 {
+            warn!(principal_len = principal.len(), "mcp: rejected — principal too long");
             return Err(ApiError::invalid("principal exceeds 256-character limit"));
         }
         if principal.contains('\0') {
+            warn!("mcp: rejected — principal contains null byte");
             return Err(ApiError::invalid("principal must not contain null bytes"));
         }
         let Some(cap) = crate::parse_capability(name) else {
+            warn!(capability = name, "mcp: unknown capability");
             return Err(ApiError::invalid(format!("unknown capability: {name}")));
         };
         let res = self.dispatch(principal, cap, args);
         if let Err(e) = &res {
+            warn!(principal, capability = name, error = %e.message, "mcp: invoke denied");
             self.audit_event(
                 "capability.error",
                 name,
@@ -266,6 +273,7 @@ impl CapabilityCore {
                 HashMap::from([("message".into(), e.message.clone())]),
             );
         } else {
+            debug!(principal, capability = name, "mcp: invoke ok");
             self.audit_event(
                 "capability.invoke",
                 name,
@@ -364,7 +372,11 @@ impl CapabilityCore {
                         if bytes.len() < 8 {
                             return Err(ApiError::invalid("file too small for safetensors"));
                         }
-                        let meta_len = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+                        let meta_len = u64::from_le_bytes(
+                            bytes[..8]
+                                .try_into()
+                                .map_err(|_| ApiError::invalid("safetensors header read error"))?,
+                        ) as usize;
                         if 8 + meta_len > bytes.len() {
                             return Err(ApiError::invalid("safetensors metadata length overflows file"));
                         }
@@ -408,9 +420,21 @@ impl CapabilityCore {
                         if bytes.len() < 24 || &bytes[..4] != b"GGUF" {
                             return Err(ApiError::invalid("not a valid GGUF file"));
                         }
-                        let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-                        let tensor_count = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
-                        let kv_count = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
+                        let version = u32::from_le_bytes(
+                            bytes[4..8]
+                                .try_into()
+                                .map_err(|_| ApiError::invalid("gguf header read error"))?,
+                        );
+                        let tensor_count = u64::from_le_bytes(
+                            bytes[8..16]
+                                .try_into()
+                                .map_err(|_| ApiError::invalid("gguf header read error"))?,
+                        );
+                        let kv_count = u64::from_le_bytes(
+                            bytes[16..24]
+                                .try_into()
+                                .map_err(|_| ApiError::invalid("gguf header read error"))?,
+                        );
                         Ok(json!({
                             "path": path,
                             "format": "gguf",

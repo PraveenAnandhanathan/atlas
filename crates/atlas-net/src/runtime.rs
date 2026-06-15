@@ -8,6 +8,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::runtime::Runtime;
+use tracing::{debug, warn};
 
 /// How long to wait for the TCP handshake to complete.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -30,7 +31,7 @@ const CB_HALF_OPEN: u8 = 2;
 ///
 /// Uses a `VecDeque` of ready streams plus a `Condvar` to park callers when
 /// the pool is at capacity and no idle connections are available.
-struct ConnectionPool {
+pub(crate) struct ConnectionPool {
     /// Idle connections ready to use.
     idle: Mutex<VecDeque<TcpStream>>,
     /// Total connections currently alive (idle + in-use).
@@ -42,7 +43,7 @@ struct ConnectionPool {
 }
 
 impl ConnectionPool {
-    fn new(max_size: usize) -> Self {
+    pub(crate) fn new(max_size: usize) -> Self {
         Self {
             idle: Mutex::new(VecDeque::new()),
             active: AtomicUsize::new(0),
@@ -56,7 +57,7 @@ impl ConnectionPool {
     /// Blocks until a slot is available if `active == max_size`.
     /// Returns `(stream, opened_new)` – the caller must increment `active`
     /// when it opens a new connection (returned as `None`).
-    fn acquire(&self) -> Result<Option<TcpStream>> {
+    pub(crate) fn acquire(&self) -> Result<Option<TcpStream>> {
         let mut guard = self
             .idle
             .lock()
@@ -65,6 +66,7 @@ impl ConnectionPool {
         loop {
             // Try to reuse an idle connection first.
             if let Some(stream) = guard.pop_front() {
+                debug!("pool: reusing idle connection");
                 return Ok(Some(stream));
             }
 
@@ -74,10 +76,12 @@ impl ConnectionPool {
                 // Reserve the slot. We'll actually open the TCP connection
                 // outside the lock.
                 self.active.fetch_add(1, Ordering::SeqCst);
+                debug!(active = active + 1, max = self.max_size, "pool: opening new connection");
                 return Ok(None);
             }
 
             // At capacity: wait for a connection to be returned.
+            warn!(active, max = self.max_size, "pool: at capacity, parking caller");
             guard = self
                 .returned
                 .wait(guard)
@@ -86,7 +90,7 @@ impl ConnectionPool {
     }
 
     /// Return a used connection to the idle pool.
-    fn release(&self, stream: TcpStream) {
+    pub(crate) fn release(&self, stream: TcpStream) {
         if let Ok(mut guard) = self.idle.lock() {
             guard.push_back(stream);
         }
@@ -95,7 +99,7 @@ impl ConnectionPool {
 
     /// Discard a connection that errored out.  Decrements the active counter
     /// so a new connection slot becomes available.
-    fn discard(&self) {
+    pub(crate) fn discard(&self) {
         self.active.fetch_sub(1, Ordering::SeqCst);
         self.returned.notify_one();
     }
@@ -108,7 +112,7 @@ impl ConnectionPool {
 /// - `Open` → `HalfOpen` after `reset_timeout` has elapsed.
 /// - `HalfOpen` → `Closed` on the first successful probe.
 /// - `HalfOpen` → `Open` on probe failure.
-struct CircuitBreaker {
+pub(crate) struct CircuitBreaker {
     /// Current state: CB_CLOSED / CB_OPEN / CB_HALF_OPEN.
     state: AtomicU8,
     /// Consecutive failure counter (reset to 0 on success).
@@ -122,7 +126,7 @@ struct CircuitBreaker {
 }
 
 impl CircuitBreaker {
-    fn new(failure_threshold: usize, reset_timeout: Duration) -> Self {
+    pub(crate) fn new(failure_threshold: usize, reset_timeout: Duration) -> Self {
         Self {
             state: AtomicU8::new(CB_CLOSED),
             failures: AtomicUsize::new(0),
@@ -134,9 +138,12 @@ impl CircuitBreaker {
 
     /// Returns `Ok(())` if the call should proceed, or an error if the
     /// circuit is open and the reset timeout has not yet elapsed.
-    fn check(&self) -> Result<()> {
+    pub(crate) fn check(&self) -> Result<()> {
         match self.state.load(Ordering::SeqCst) {
-            CB_CLOSED => Ok(()),
+            CB_CLOSED => {
+                debug!("circuit_breaker: closed — allowing call");
+                Ok(())
+            }
             CB_OPEN => {
                 // Check whether we should transition to HalfOpen.
                 let tripped = self
@@ -180,13 +187,13 @@ impl CircuitBreaker {
     }
 
     /// Record a successful call.
-    fn on_success(&self) {
+    pub(crate) fn on_success(&self) {
         self.failures.store(0, Ordering::SeqCst);
         self.state.store(CB_CLOSED, Ordering::SeqCst);
     }
 
     /// Record a failed call.
-    fn on_failure(&self) {
+    pub(crate) fn on_failure(&self) {
         let failures = self.failures.fetch_add(1, Ordering::SeqCst) + 1;
         let current = self.state.load(Ordering::SeqCst);
         if current == CB_HALF_OPEN {
@@ -197,7 +204,8 @@ impl CircuitBreaker {
         }
     }
 
-    fn trip(&self) {
+    pub(crate) fn trip(&self) {
+        warn!(failures = self.failures.load(Ordering::SeqCst), "circuit_breaker: tripping to OPEN");
         self.state.store(CB_OPEN, Ordering::SeqCst);
         if let Ok(mut t) = self.tripped_at.lock() {
             *t = Some(Instant::now());
@@ -210,6 +218,10 @@ impl CircuitBreaker {
 ///
 /// Concurrent callers each borrow a connection from the pool; up to
 /// `pool_size` connections may be live simultaneously.
+///
+/// **Security note**: connections are plain TCP. Production deployments must
+/// place ATLAS behind a TLS-terminating reverse proxy (nginx, Envoy, AWS ALB)
+/// or use a VPN / mTLS sidecar. Native-TLS transport is tracked in the backlog.
 pub struct ClientRuntime {
     rt: Runtime,
     addr: String,
@@ -339,5 +351,85 @@ impl ClientRuntime {
                 Err(e)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- CircuitBreaker unit tests ----------------------------------------
+
+    #[test]
+    fn circuit_breaker_starts_closed() {
+        let cb = CircuitBreaker::new(3, Duration::from_secs(60));
+        assert!(cb.check().is_ok());
+    }
+
+    #[test]
+    fn circuit_breaker_trips_after_threshold() {
+        let cb = CircuitBreaker::new(3, Duration::from_secs(60));
+        cb.on_failure();
+        cb.on_failure();
+        assert!(cb.check().is_ok(), "should still be closed at 2 failures");
+        cb.on_failure(); // threshold reached
+        assert!(cb.check().is_err(), "should be open at 3 failures");
+    }
+
+    #[test]
+    fn circuit_breaker_closes_on_success() {
+        let cb = CircuitBreaker::new(3, Duration::from_secs(60));
+        cb.on_failure();
+        cb.on_failure();
+        cb.on_failure();
+        assert!(cb.check().is_err());
+        cb.on_success();
+        assert!(cb.check().is_ok(), "success must close the circuit");
+    }
+
+    #[test]
+    fn circuit_breaker_transitions_to_half_open_after_timeout() {
+        let cb = CircuitBreaker::new(2, Duration::from_millis(10));
+        cb.on_failure();
+        cb.on_failure(); // tripped
+        assert!(cb.check().is_err());
+        std::thread::sleep(Duration::from_millis(25));
+        // After reset_timeout the circuit should allow one probe (HalfOpen).
+        assert!(cb.check().is_ok(), "should transition to HalfOpen after timeout");
+    }
+
+    #[test]
+    fn circuit_breaker_half_open_failure_trips_again() {
+        let cb = CircuitBreaker::new(2, Duration::from_millis(10));
+        cb.on_failure();
+        cb.on_failure();
+        std::thread::sleep(Duration::from_millis(25));
+        cb.check().ok(); // transitions to HalfOpen
+        cb.on_failure(); // probe fails → back to Open
+        assert!(cb.check().is_err(), "failed probe must re-trip the circuit");
+    }
+
+    // ---- ConnectionPool unit tests ----------------------------------------
+
+    #[test]
+    fn connection_pool_returns_none_when_slot_available() {
+        let pool = ConnectionPool::new(2);
+        // No idle connections — acquire reserves a new slot and returns None.
+        let result = pool.acquire().unwrap();
+        assert!(result.is_none(), "fresh pool should return None (new slot)");
+        assert_eq!(pool.active.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn connection_pool_tracks_active_count() {
+        let pool = ConnectionPool::new(2);
+        assert!(pool.acquire().unwrap().is_none()); // active = 1
+        assert!(pool.acquire().unwrap().is_none()); // active = 2
+        assert_eq!(pool.active.load(Ordering::SeqCst), 2);
+        pool.discard(); // active = 1
+        assert_eq!(pool.active.load(Ordering::SeqCst), 1);
+        // One slot freed — should be able to acquire again.
+        assert!(pool.acquire().unwrap().is_none()); // active = 2
+        assert_eq!(pool.active.load(Ordering::SeqCst), 2);
     }
 }

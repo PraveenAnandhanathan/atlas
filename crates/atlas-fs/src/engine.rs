@@ -25,6 +25,7 @@ use dashmap::DashMap;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use tracing::{debug, instrument, warn};
 
 /// WORM (Write-Once Read-Many) retention policy for a path.
 ///
@@ -290,7 +291,9 @@ impl Fs {
     // -- Reads --------------------------------------------------------
 
     /// Resolve an absolute path to its object hash and kind.
+    #[instrument(skip(self), fields(path = %path))]
     pub fn stat(&self, path: &str) -> Result<Entry> {
+        debug!("fs stat: path={path}");
         let path = normalize_path(path)?;
         self.auth_check(&path, OpKind::Stat)?;
         let (hash, kind) = self.resolve(&path)?;
@@ -307,7 +310,9 @@ impl Fs {
     }
 
     /// List the immediate children of a directory.
+    #[instrument(skip(self), fields(path = %path))]
     pub fn list(&self, path: &str) -> Result<Vec<Entry>> {
+        debug!("fs list: path={path}");
         let path = normalize_path(path)?;
         self.auth_check(&path, OpKind::List)?;
         let (hash, kind) = self.resolve(&path)?;
@@ -371,7 +376,9 @@ impl Fs {
     // -- Writes -------------------------------------------------------
 
     /// Create or overwrite a file at `path` with `bytes`.
+    #[instrument(skip(self, bytes), fields(path = %path, bytes = bytes.len()))]
     pub fn write(&self, path: &str, bytes: &[u8]) -> Result<Entry> {
+        debug!("fs write: path={path} bytes={}", bytes.len());
         let path = normalize_path(path)?;
         // AUTH-HOOK TIMING NOTE (P7-1): auth_check runs on the path string
         // *before* write_gate is acquired.  A concurrent writer could change
@@ -394,8 +401,10 @@ impl Fs {
         }
 
         // P0-1: serialise all mutations through the write gate
-        let _gate = self.write_gate.lock()
-            .map_err(|_| Error::Internal("write-gate mutex poisoned".into()))?;
+        let _gate = self.write_gate.lock().map_err(|_| {
+            warn!("write_gate mutex is poisoned");
+            Error::Internal("write-gate mutex poisoned".into())
+        })?;
 
         let blob_hash = self.write_blob(bytes)?;
 
@@ -433,15 +442,21 @@ impl Fs {
     }
 
     /// Delete a file or empty directory at `path`.
+    #[instrument(skip(self), fields(path = %path))]
     pub fn delete(&self, path: &str) -> Result<()> {
+        debug!("fs delete: path={path}");
         let path = normalize_path(path)?;
         self.auth_check(&path, OpKind::Delete)?;
         if path == "/" {
             return Err(Error::Invalid("cannot delete root".into()));
         }
+        // WORM check: deleting an immutable path circumvents retention.
+        self.check_worm_write(&path)?;
         let (parent, name) = parent_and_name(&path)?;
-        let _gate = self.write_gate.lock()
-            .map_err(|_| Error::Internal("write-gate mutex poisoned".into()))?;
+        let _gate = self.write_gate.lock().map_err(|_| {
+            warn!("write_gate mutex is poisoned");
+            Error::Internal("write-gate mutex poisoned".into())
+        })?;
 
         let (target_hash, target_kind) = self.resolve(&path)?;
         if target_kind == ObjectKind::Dir {
@@ -462,7 +477,9 @@ impl Fs {
     }
 
     /// Rename `from` to `to`. Overwrites `to` if it already exists.
+    #[instrument(skip(self), fields(path = %from))]
     pub fn rename(&self, from: &str, to: &str) -> Result<()> {
+        debug!("fs rename: from={from} to={to}");
         let from = normalize_path(from)?;
         let to = normalize_path(to)?;
         // Check permission on both source (Rename) and destination (Write)
@@ -479,8 +496,13 @@ impl Fs {
         if from == to {
             return Ok(());
         }
-        let _gate = self.write_gate.lock()
-            .map_err(|_| Error::Internal("write-gate mutex poisoned".into()))?;
+        // WORM check: renaming away from a WORM path circumvents retention
+        // (the bytes would become addressable under a non-WORM path).
+        self.check_worm_write(&from)?;
+        let _gate = self.write_gate.lock().map_err(|_| {
+            warn!("write_gate mutex is poisoned");
+            Error::Internal("write-gate mutex poisoned".into())
+        })?;
         let (from_parent, from_name) = parent_and_name(&from)?;
         let (to_parent, to_name) = parent_and_name(&to)?;
 
@@ -946,6 +968,50 @@ mod tests {
         // All four new files must be present.
         let new_entries = fs.list("/new").unwrap();
         assert_eq!(new_entries.len(), 4, "all 4 concurrent writes must survive renames");
+    }
+
+    // WORM: legal hold must block write, delete, and rename.
+    #[test]
+    fn worm_legal_hold_blocks_write() {
+        let (_d, fs) = tmp_fs();
+        fs.write("/data/report.txt", b"original").unwrap();
+        fs.set_worm("/data/report.txt", WormPolicy { retain_until_ms: None, legal_hold: true }).unwrap();
+        let err = fs.write("/data/report.txt", b"tampered").unwrap_err();
+        assert!(matches!(err, Error::PermissionDenied(_)), "{err:?}");
+        assert_eq!(fs.read("/data/report.txt").unwrap(), b"original".to_vec());
+    }
+
+    #[test]
+    fn worm_legal_hold_blocks_delete() {
+        let (_d, fs) = tmp_fs();
+        fs.write("/immutable.txt", b"keep").unwrap();
+        fs.set_worm("/immutable.txt", WormPolicy { retain_until_ms: None, legal_hold: true }).unwrap();
+        let err = fs.delete("/immutable.txt").unwrap_err();
+        assert!(matches!(err, Error::PermissionDenied(_)), "{err:?}");
+        assert_eq!(fs.read("/immutable.txt").unwrap(), b"keep".to_vec());
+    }
+
+    #[test]
+    fn worm_legal_hold_blocks_rename() {
+        let (_d, fs) = tmp_fs();
+        fs.write("/locked.txt", b"data").unwrap();
+        fs.set_worm("/locked.txt", WormPolicy { retain_until_ms: None, legal_hold: true }).unwrap();
+        let err = fs.rename("/locked.txt", "/escaped.txt").unwrap_err();
+        assert!(matches!(err, Error::PermissionDenied(_)), "{err:?}");
+        // Original file must still exist.
+        assert_eq!(fs.read("/locked.txt").unwrap(), b"data".to_vec());
+        assert!(fs.read("/escaped.txt").is_err());
+    }
+
+    #[test]
+    fn worm_expired_retention_allows_write() {
+        let (_d, fs) = tmp_fs();
+        fs.write("/old.txt", b"original").unwrap();
+        // Set retention to a timestamp already in the past (1 ms epoch).
+        fs.set_worm("/old.txt", WormPolicy { retain_until_ms: Some(1), legal_hold: false }).unwrap();
+        // Expired retention must not block the write.
+        fs.write("/old.txt", b"updated").unwrap();
+        assert_eq!(fs.read("/old.txt").unwrap(), b"updated".to_vec());
     }
 
     // P6-2: Rename whose destination is forbidden by the auth hook must fail

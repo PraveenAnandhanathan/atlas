@@ -28,6 +28,7 @@ use atlas_core::Hash;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use tracing::{debug, warn};
 use thiserror::Error;
 
 pub use text_index::TextIndex;
@@ -112,6 +113,7 @@ impl AtlasIndex {
 
     /// Store or update a document in both sub-indexes.
     pub fn index_document(&mut self, doc: &Document) -> Result<()> {
+        debug!(path = %doc.path, hash = %doc.file_hash.short(), has_embedding = !doc.embedding.is_empty(), "indexer: index_document start");
         self.text.index(doc)?;
         if !doc.embedding.is_empty() {
             self.vectors.upsert_with_model(
@@ -121,6 +123,9 @@ impl AtlasIndex {
                 &doc.xattrs,
                 &doc.model_version,
             )?;
+            debug!(path = %doc.path, dims = doc.embedding.len(), model = %doc.model_version, "indexer: vector upserted");
+        } else {
+            warn!(path = %doc.path, "indexer: document has no embedding — text-only index");
         }
         Ok(())
     }

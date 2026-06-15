@@ -6,16 +6,16 @@ use serde::{Deserialize, Serialize};
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-fn http_client() -> reqwest::blocking::Client {
+fn http_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
-        .expect("HTTP client build")
+        .map_err(|e| format!("HTTP client build failed: {e}"))
 }
 
 /// Fetch raw bytes from a URL, returning an error string on failure.
 fn http_get_bytes(url: &str) -> Result<Vec<u8>, String> {
-    let resp = http_client()
+    let resp = http_client()?
         .get(url)
         .send()
         .map_err(|e| format!("GET {url}: {e}"))?;
@@ -29,7 +29,7 @@ fn http_get_bytes(url: &str) -> Result<Vec<u8>, String> {
 
 /// Fetch bytes from `url` with an optional Bearer token.
 fn http_get_with_token(url: &str, token: Option<&str>) -> Result<Vec<u8>, String> {
-    let mut req = http_client().get(url);
+    let mut req = http_client()?.get(url);
     if let Some(t) = token {
         req = req.bearer_auth(t);
     }
@@ -163,7 +163,7 @@ fn fetch_git_lfs_object(repo_url: &str, oid: &str) -> Result<Vec<u8>, String> {
         "transfers": ["basic"],
         "objects": [{"oid": oid, "size": 0}]
     });
-    let mut req = http_client()
+    let mut req = http_client()?
         .post(&api_url)
         .header("Accept", "application/vnd.git-lfs+json")
         .header("Content-Type", "application/vnd.git-lfs+json")
