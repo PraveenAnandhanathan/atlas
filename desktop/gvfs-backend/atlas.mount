@@ -1,0 +1,9 @@
+[Mount]
+Type=Atlas
+Scheme=atlas
+DefaultPort=7645
+CanMount=true
+UnixDeviceFile=false
+AutoMount=false
+Exec=/usr/lib/gvfs/gvfsd-atlas
+DefaultDisplayName=ATLAS Storage

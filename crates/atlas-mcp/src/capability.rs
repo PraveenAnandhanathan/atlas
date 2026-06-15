@@ -46,6 +46,7 @@ pub enum Capability {
     policy_check,
     policy_audit,
     policy_set,
+    worm_set,
 
     // Agent / workflow
     agent_scratchpad_create,
@@ -86,6 +87,7 @@ impl Capability {
             policy_check => "atlas.policy.check",
             policy_audit => "atlas.policy.audit",
             policy_set => "atlas.policy.set",
+            worm_set => "atlas.worm.set",
             agent_scratchpad_create => "atlas.agent.scratchpad_create",
             agent_checkpoint => "atlas.agent.checkpoint",
             agent_fork => "atlas.agent.fork",
@@ -124,6 +126,7 @@ impl Capability {
             policy_check,
             policy_audit,
             policy_set,
+            worm_set,
             agent_scratchpad_create,
             agent_checkpoint,
             agent_fork,
@@ -146,6 +149,7 @@ impl Capability {
                 | version_tag
                 | lineage_record
                 | policy_set
+                | worm_set
                 | agent_scratchpad_create
                 | agent_checkpoint
                 | agent_fork

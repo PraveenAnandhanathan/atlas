@@ -6,6 +6,7 @@
 //! contexts.  Use `SessionConfig::enterprise()` for corporate SSO deployments
 //! and `SessionConfig::personal()` for consumer / developer use.
 
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -76,6 +77,10 @@ impl Default for SessionConfig {
 }
 
 impl AuthSession {
+    /// Create a session with a **caller-supplied** token string.
+    ///
+    /// Prefer [`AuthSession::mint`] for all production use — it generates a
+    /// cryptographically-strong 256-bit random token via `OsRng`.
     pub fn new(token: impl Into<String>, principal: impl Into<String>, groups: Vec<String>, ttl_ms: u64, method: AuthMethod) -> Self {
         Self {
             token: token.into(),
@@ -84,6 +89,18 @@ impl AuthSession {
             expires_at_ms: now_ms() + ttl_ms,
             auth_method: method,
         }
+    }
+
+    /// Create a session with a fresh 256-bit random token from the OS CSPRNG.
+    ///
+    /// This is the only safe factory for production session minting — it
+    /// guarantees that tokens have at least 256 bits of entropy and are
+    /// unique across restarts.
+    pub fn mint(principal: impl Into<String>, groups: Vec<String>, ttl_ms: u64, method: AuthMethod) -> Self {
+        let mut raw = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut raw);
+        let token = hex::encode(raw);
+        Self::new(token, principal, groups, ttl_ms, method)
     }
 
     pub fn is_expired(&self) -> bool {
@@ -193,6 +210,17 @@ mod tests {
         store.insert(session("tok3", 60_000)).unwrap();
         assert!(store.revoke("tok3"));
         assert!(store.get("tok3").is_none());
+    }
+
+    #[test]
+    fn mint_produces_unique_256bit_tokens() {
+        let s1 = AuthSession::mint("alice", vec![], 60_000, AuthMethod::Oidc);
+        let s2 = AuthSession::mint("alice", vec![], 60_000, AuthMethod::Oidc);
+        // Hex-encoded 32-byte token = 64 chars.
+        assert_eq!(s1.token.len(), 64);
+        assert!(s1.token.chars().all(|c| c.is_ascii_hexdigit()));
+        // Two minted tokens must be distinct.
+        assert_ne!(s1.token, s2.token);
     }
 
     #[test]

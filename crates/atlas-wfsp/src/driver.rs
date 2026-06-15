@@ -426,6 +426,51 @@ mod windows_impl {
         }
     }
 
+    /// Offset of the FileNameBuf field within the FSP_FSCTL_DIR_INFO structure.
+    ///
+    /// Layout: u16 Size (2) + u8 Padding[6] (6) + FSP_FSCTL_FILE_INFO (80) = 88.
+    const DIR_INFO_HEADER_SIZE: usize = 88;
+
+    /// Inline equivalent of WinFsp's `FspFileSystemAddDirInfo`.
+    ///
+    /// Serialises one FSP_FSCTL_DIR_INFO entry (header + UTF-16 filename)
+    /// into `buf[*transferred..]`. Returns `false` when the buffer is full.
+    unsafe fn fsp_add_dir_info(
+        file_info: &FspFileInfo,
+        filename_u16: &[u16],
+        buf: *mut u8,
+        buf_len: usize,
+        transferred: &mut usize,
+    ) -> bool {
+        let name_bytes = filename_u16.len() * 2;
+        let raw_size = DIR_INFO_HEADER_SIZE + name_bytes;
+        // Entries must be 8-byte aligned so the kernel can walk the array.
+        let aligned_size = (raw_size + 7) & !7;
+        if *transferred + aligned_size > buf_len {
+            return false;
+        }
+        let dest = buf.add(*transferred);
+        // Zero the entire (aligned) slot first.
+        std::ptr::write_bytes(dest, 0, aligned_size);
+        // Write Size field (u16 at offset 0) — use the raw (unaligned) size
+        // so the kernel can compute the filename length from it.
+        *(dest as *mut u16) = raw_size as u16;
+        // Write FileInfo starting at offset 8 (after Size + 6-byte Padding0).
+        std::ptr::copy_nonoverlapping(
+            file_info as *const FspFileInfo as *const u8,
+            dest.add(8),
+            std::mem::size_of::<FspFileInfo>(),
+        );
+        // Write filename at offset DIR_INFO_HEADER_SIZE.
+        std::ptr::copy_nonoverlapping(
+            filename_u16.as_ptr() as *const u8,
+            dest.add(DIR_INFO_HEADER_SIZE),
+            name_bytes,
+        );
+        *transferred += aligned_size;
+        true
+    }
+
     unsafe extern "C" fn cb_read_directory(
         fs: FspFileSystem,
         file_context: *mut std::ffi::c_void,
@@ -438,22 +483,33 @@ mod windows_impl {
         let ctx = &*(fs as *const FsContext);
         let path = &*(file_context as *const String);
 
-        match ctx.fs.list(path) {
-            Ok(entries) => {
-                // Write a simplified entry list. In production this calls
-                // FspFileSystemAddDirInfo from the WinFsp DLL; here we write
-                // the count as a u32 to signal how many entries exist.
-                let count = entries.len() as u32;
-                let bytes_needed = std::mem::size_of::<u32>();
-                if (length as usize) < bytes_needed {
-                    return STATUS_IO_DEVICE_ERROR;
-                }
-                *(buffer as *mut u32) = count;
-                *p_bytes_transferred = bytes_needed as u32;
-                STATUS_SUCCESS
+        let entries = match ctx.fs.list(path) {
+            Ok(e) => e,
+            Err(e) => return atlas_err_to_ntstatus(&e),
+        };
+
+        let buf_ptr = buffer as *mut u8;
+        let buf_len = length as usize;
+        let mut transferred: usize = 0;
+
+        for entry in &entries {
+            let filename = entry.path.rsplit('/').next().unwrap_or(&entry.path);
+            let filename_u16: Vec<u16> = filename.encode_utf16().collect();
+            let file_info = FspFileInfo::for_entry(entry);
+            if !fsp_add_dir_info(&file_info, &filename_u16, buf_ptr, buf_len, &mut transferred) {
+                // Buffer full — WinFsp will call us again with a new buffer.
+                break;
             }
-            Err(e) => atlas_err_to_ntstatus(&e),
         }
+
+        // End-of-entries sentinel: a zeroed DIR_INFO_HEADER_SIZE block (Size = 0).
+        if transferred + DIR_INFO_HEADER_SIZE <= buf_len {
+            std::ptr::write_bytes(buf_ptr.add(transferred), 0, DIR_INFO_HEADER_SIZE);
+            transferred += DIR_INFO_HEADER_SIZE;
+        }
+
+        *p_bytes_transferred = transferred as u32;
+        STATUS_SUCCESS
     }
 
     unsafe extern "C" fn cb_create(

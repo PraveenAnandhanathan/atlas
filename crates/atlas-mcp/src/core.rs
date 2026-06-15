@@ -15,7 +15,7 @@
 
 use crate::Capability;
 use atlas_core::{Author, Hash, ObjectKind};
-use atlas_fs::Fs;
+use atlas_fs::{Fs, WormPolicy};
 use atlas_governor::{
     policy::{AccessRequest, Decision, Effect, Permission, Policy, PolicyEngine, Rule},
     AuditLog, RedactEngine, TokenAuthority,
@@ -347,9 +347,84 @@ impl CapabilityCore {
                 }
                 Ok(json!({"text": text, "size": bytes.len()}))
             }
-            fs_read_tensor => Err(ApiError::not_implemented(
-                "format-aware reads land with the format-plugin work in §15.5",
-            )),
+            fs_read_tensor => {
+                let path = req_str(args, "path")?;
+                self.check_scope(&path)?;
+                self.check_policy(principal, &path, Permission::Read)?;
+                let bytes = self.fs.read(&path).map_err(map_fs_err)?;
+                let ext = std::path::Path::new(&path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                match ext.as_str() {
+                    "safetensors" => {
+                        // safetensors: first 8 bytes = u64 LE metadata_len,
+                        // then metadata_len bytes of UTF-8 JSON.
+                        if bytes.len() < 8 {
+                            return Err(ApiError::invalid("file too small for safetensors"));
+                        }
+                        let meta_len = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+                        if 8 + meta_len > bytes.len() {
+                            return Err(ApiError::invalid("safetensors metadata length overflows file"));
+                        }
+                        let meta_json = std::str::from_utf8(&bytes[8..8 + meta_len])
+                            .map_err(|_| ApiError::invalid("safetensors metadata is not valid UTF-8"))?;
+                        let meta: serde_json::Value = serde_json::from_str(meta_json)
+                            .map_err(|e| ApiError::invalid(format!("safetensors metadata JSON: {e}")))?;
+                        // Collect tensor entries (exclude __metadata__ key).
+                        let tensors: Vec<serde_json::Value> = meta
+                            .as_object()
+                            .map(|obj| {
+                                obj.iter()
+                                    .filter(|(k, _)| *k != "__metadata__")
+                                    .map(|(name, v)| {
+                                        json!({
+                                            "name": name,
+                                            "dtype": v.get("dtype"),
+                                            "shape": v.get("shape"),
+                                        })
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let user_meta = meta
+                            .get("__metadata__")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+                        Ok(json!({
+                            "path": path,
+                            "format": "safetensors",
+                            "tensors": tensors,
+                            "metadata": user_meta,
+                            "file_size": bytes.len(),
+                        }))
+                    }
+                    "gguf" => {
+                        // GGUF magic: 4 bytes 0x47 0x47 0x55 0x46 ("GGUF")
+                        // Version: u32 LE at offset 4
+                        // tensor_count: u64 LE at offset 8
+                        // kv_count: u64 LE at offset 16
+                        if bytes.len() < 24 || &bytes[..4] != b"GGUF" {
+                            return Err(ApiError::invalid("not a valid GGUF file"));
+                        }
+                        let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+                        let tensor_count = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+                        let kv_count = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
+                        Ok(json!({
+                            "path": path,
+                            "format": "gguf",
+                            "gguf_version": version,
+                            "tensor_count": tensor_count,
+                            "kv_count": kv_count,
+                            "file_size": bytes.len(),
+                        }))
+                    }
+                    _ => Err(ApiError::invalid(format!(
+                        "fs_read_tensor: unsupported format '{ext}'; supported: safetensors, gguf"
+                    ))),
+                }
+            }
             fs_read_schema => {
                 let path = req_str(args, "path")?;
                 self.check_scope(&path)?;
@@ -886,6 +961,44 @@ impl CapabilityCore {
                         },
                         "policy_file": policy_file,
                     }
+                }))
+            }
+
+            // -- WORM -------------------------------------------------
+            worm_set => {
+                let path = req_str(args, "path")?;
+                self.check_scope(&path)?;
+                self.check_policy(principal, &path, Permission::Write)?;
+                let retain_until_ms = args.get("retain_until_ms").and_then(|v| v.as_u64());
+                let legal_hold = args
+                    .get("legal_hold")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let policy = WormPolicy {
+                    retain_until_ms,
+                    legal_hold,
+                };
+                self.fs
+                    .set_worm(&path, policy)
+                    .map_err(|e| ApiError::internal(e.to_string()))?;
+                self.audit_event(
+                    "worm.set",
+                    &path,
+                    principal,
+                    HashMap::from([
+                        (
+                            "retain_until_ms".into(),
+                            retain_until_ms
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "indefinite".into()),
+                        ),
+                        ("legal_hold".into(), legal_hold.to_string()),
+                    ]),
+                );
+                Ok(json!({
+                    "path": path,
+                    "retain_until_ms": retain_until_ms,
+                    "legal_hold": legal_hold,
                 }))
             }
 

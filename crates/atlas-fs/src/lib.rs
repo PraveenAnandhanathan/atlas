@@ -11,5 +11,5 @@
 pub mod engine;
 pub mod path;
 
-pub use engine::{AuthHook, Entry, Fs, OpKind, WriteHook};
+pub use engine::{AuthHook, Entry, Fs, OpKind, WormPolicy, WriteHook};
 pub use path::{normalize_path, split_path};

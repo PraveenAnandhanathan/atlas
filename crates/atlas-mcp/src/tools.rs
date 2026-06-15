@@ -303,6 +303,19 @@ pub fn tool_descriptors() -> Vec<ToolDescriptor> {
         ),
         mutates: true,
     });
+    out.push(ToolDescriptor {
+        name: worm_set.name(),
+        description: "Apply a WORM (Write-Once Read-Many) retention or legal-hold policy to a path. Once set, the path cannot be overwritten or deleted until the retention period expires and the legal hold is lifted.",
+        input_schema: obj(
+            vec![
+                ("path", path()),
+                ("retain_until_ms", s("integer", "Unix timestamp (ms) until which the path is immutable. Omit for indefinite hold.")),
+                ("legal_hold", s("boolean", "When true, block writes regardless of retain_until_ms.")),
+            ],
+            &["path"],
+        ),
+        mutates: true,
+    });
 
     // Agent / workflow
     out.push(ToolDescriptor {

@@ -3,7 +3,17 @@
 **A**ddressable, **T**ype-aware, **L**ineage-tracked, **A**uditable **S**torage —
 a content-addressed, versioned filesystem for AI-era data.
 
-> **Status:** Phases 0 – 8 complete. Single-node substrate, distributed plane, semantic plane, governance plane, full protocol surface, desktop integration, architecture hardening, and production hardening (encryption at rest, enterprise auth, durable sessions) are wired and tested.
+> **Status:** Phases 0 – 8 complete and production-hardened.
+> Core substrate, distributed plane, semantic plane (with HNSW ANN index), governance plane,
+> full protocol surface (MCP / REST / gRPC / S3 / A2A / tool-wire), desktop integration
+> (WinFsp, macOS FileProvider Swift appex, GVFS/KIO backends, Windows COM shell extension),
+> architecture hardening, and production hardening (AES-256-GCM encryption at rest,
+> enterprise auth, WORM/retention enforcement, durable sessions) are all wired and tested.
+>
+> **Known limitations before worldwide GA:** ANN index uses in-memory HNSW (DiskANN
+> persistence is Phase 4); cloud chaos cluster control-plane is via atlas-net probes
+> (full gRPC control channel in Phase 4); macOS appex, GVfs and KIO backends require
+> building with the respective platform SDKs (Swift/Xcode, GVfs/Meson, KF5/CMake).
 
 The full vision is in
 [ATLAS_design_report.md](ATLAS_design_report.md); the build plan is in
@@ -99,9 +109,33 @@ key decisions live in [docs/adr/](docs/adr/).
   envelope; `invoke()` principal validation; Mutex lock-poisoning recovery in
   `session.rs`, `scim.rs`, `tenant.rs`.
 
+### Phase 9 — Production hardening (P1–P3 backlog fixes)
+- Security: SAML signature-stripping bypass patched; OIDC `alg:none` rejection; quota
+  tenant-isolation wired into MCP write path; compliance evidence now probes real files.
+- Embedder: fail-fast health-check on startup; mid-ingest failures logged as errors.
+- Semantics: HNSW ANN index (in-memory) replaces O(n) brute-force above 100 docs;
+  scale warnings at 50 k/250 k docs; model-version staleness tracking fixed.
+- MCP: all 31 tools implemented (`fs_read_schema`, `fs_read_tensor`, `semantic_*`,
+  `policy_set`, `worm_set`).
+- Chaos: network invariants wired to real atlas-net probes.
+- Redaction: added unhyphenated SSN, AWS AKIA, npm_/glpat-/xoxp-/xoxa-,
+  PEM private key headers, US phone numbers.
+- Network: 5s connect timeout + 30s request timeout; 4-connection pool +
+  5-failure circuit breaker in `ClientRuntime`.
+- WORM/retention: immutable-write enforcement in the FS write path (`Fs::write`
+  checks `WormPolicy` before proceeding); `worm_set` MCP tool.
+- Auth: `AuthSession::mint()` — 256-bit `OsRng` token factory.
+- Desktop: macOS FileProvider Swift `.appex` source; GVFS C backend +
+  KIO worker source; Windows COM shim C++ source; WinFsp `cb_read_directory`
+  now writes proper `FSP_FSCTL_DIR_INFO` entries so Explorer can enumerate files.
+- RDMA transport no longer silently falls back to TCP — returns an explicit error.
+- Migration comment corrected: S3/GCS/git-LFS sources were always wired.
+
 ## Not yet wired
 
 - Tauri GUI, full DR runbook, compliance audit log export.
+- DiskANN on-disk persistence (HNSW is in-memory only).
+- gRPC control channel for chaos cluster (currently uses atlas-net TCP probes).
 
 ## Repo layout
 

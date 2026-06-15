@@ -54,6 +54,11 @@ impl Evidence {
 /// Each record with a file `path` is probed on disk.  The status is
 /// `Collected` only when the file actually exists; otherwise `Missing`.
 /// Records with no path (manual/test evidence) remain `Collected`.
+///
+/// The WORM enforcement evidence (control "C.7.3") is derived by probing
+/// for the presence of the `atlas-fs` WORM enforcement symbol at compile
+/// time rather than checking a file on disk — if this binary built, the
+/// code is present.  We therefore emit it as a `TestResult` with no path.
 pub fn collect_automated(store_path: &str) -> Vec<Evidence> {
     let ts = now_secs();
     let candidates: Vec<(_, _, _, Option<String>)> = vec![
@@ -77,7 +82,7 @@ pub fn collect_automated(store_path: &str) -> Vec<Evidence> {
          Some(format!("{store_path}/backup/restore-test.log"))),
     ];
 
-    candidates.into_iter().map(|(control_id, kind, description, path)| {
+    let mut result: Vec<Evidence> = candidates.into_iter().map(|(control_id, kind, description, path)| {
         let status = match &path {
             Some(p) => {
                 if std::path::Path::new(p).exists() {
@@ -96,7 +101,63 @@ pub fn collect_automated(store_path: &str) -> Vec<Evidence> {
             status,
             collected_at: ts,
         }
-    }).collect()
+    }).collect();
+
+    // C.7.3 — WORM / Retention / Legal-hold enforcement.
+    //
+    // The presence of `atlas_fs::WormPolicy` and `Fs::check_worm_write` in
+    // the binary proves the write-path enforcement was compiled in.  We
+    // verify at runtime that `check_worm_write` actually returns an error
+    // for a path that has an active legal hold, so this is a live code probe,
+    // not a documentation claim.
+    let worm_status = verify_worm_enforcement();
+    result.push(Evidence {
+        control_id: "C.7.3".into(),
+        kind: EvidenceKind::TestResult,
+        description: "WORM / retention / legal-hold write-path enforcement (atlas-fs)".into(),
+        path: None,
+        status: worm_status,
+        collected_at: ts,
+    });
+
+    result
+}
+
+/// Probe WORM enforcement by exercising `Fs::set_worm` + `Fs::check_worm_write`
+/// in-process.  Returns `Collected` when the enforcement correctly blocks a
+/// write to a legal-hold path; `Missing` otherwise.
+fn verify_worm_enforcement() -> EvidenceStatus {
+    use atlas_fs::{Fs, WormPolicy};
+
+    // We need a temporary store to probe the write-path.
+    let dir = match tempfile::tempdir() {
+        Ok(d) => d,
+        Err(_) => return EvidenceStatus::Missing,
+    };
+    let fs = match Fs::init(dir.path()) {
+        Ok(f) => f,
+        Err(_) => return EvidenceStatus::Missing,
+    };
+
+    // Write a seed file so the path exists.
+    if fs.write("/worm-probe.bin", b"seed").is_err() {
+        return EvidenceStatus::Missing;
+    }
+
+    // Apply a legal hold.
+    let policy = WormPolicy {
+        retain_until_ms: None,
+        legal_hold: true,
+    };
+    if fs.set_worm("/worm-probe.bin", policy).is_err() {
+        return EvidenceStatus::Missing;
+    }
+
+    // A second write must be blocked.
+    match fs.write("/worm-probe.bin", b"overwrite-attempt") {
+        Err(atlas_core::Error::PermissionDenied(_)) => EvidenceStatus::Collected,
+        _ => EvidenceStatus::Missing,
+    }
 }
 
 fn now_secs() -> u64 {

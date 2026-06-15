@@ -22,8 +22,24 @@ use atlas_object::{
     FileManifest, HeadState, RefRecord, StoreConfig,
 };
 use dashmap::DashMap;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+/// WORM (Write-Once Read-Many) retention policy for a path.
+///
+/// When set on a path, any write or delete to that path is blocked until
+/// the retention period expires and the legal hold is lifted.
+#[derive(Debug, Clone)]
+pub struct WormPolicy {
+    /// Unix timestamp (ms) until which the path is immutable.
+    /// `None` means indefinite hold — the path is permanently immutable
+    /// until the policy is explicitly removed by a privileged caller.
+    pub retain_until_ms: Option<u64>,
+    /// When `true`, the object is under legal hold regardless of the
+    /// `retain_until_ms` value and cannot be overwritten or deleted.
+    pub legal_hold: bool,
+}
 
 /// Hook called before every mutating operation.
 /// Implementations return `Err` to block the operation (e.g. quota exceeded).
@@ -84,6 +100,8 @@ pub struct Fs {
     principal: Option<String>,
     /// In-process cache of decoded directory manifests (P2-1).
     dir_cache: Arc<DashMap<Hash, DirectoryManifest>>,
+    /// WORM retention policies keyed by normalised path.
+    worm: Arc<Mutex<HashMap<String, WormPolicy>>>,
 }
 
 impl Fs {
@@ -171,6 +189,7 @@ impl Fs {
             auth_hook: None,
             principal: None,
             dir_cache: Arc::new(DashMap::new()),
+            worm: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -206,6 +225,64 @@ impl Fs {
         if let Some(hook) = &self.auth_hook {
             let principal = self.principal.as_deref().unwrap_or("anonymous");
             hook.authorize(principal, path, op)?;
+        }
+        Ok(())
+    }
+
+    // -- WORM retention -----------------------------------------------
+
+    /// Attach a WORM retention policy to `path`.
+    ///
+    /// Once set, `write` and `delete` calls targeting this path will be
+    /// refused until the policy is cleared (by setting a policy whose
+    /// retention has expired and whose legal hold is false).
+    pub fn set_worm(&self, path: &str, policy: WormPolicy) -> Result<()> {
+        let path = normalize_path(path)?;
+        let mut worm = self
+            .worm
+            .lock()
+            .map_err(|_| Error::Internal("worm mutex poisoned".into()))?;
+        worm.insert(path, policy);
+        Ok(())
+    }
+
+    /// Check whether `path` is currently immutable under a WORM policy.
+    ///
+    /// Returns `Err(Error::PermissionDenied(...))` when:
+    /// - The path has a legal hold, or
+    /// - The path has an active retention period (`retain_until_ms` is in
+    ///   the future or `None`).
+    ///
+    /// Returns `Ok(())` when no WORM policy is configured for the path, or
+    /// when the configured policy has fully expired.
+    pub fn check_worm_write(&self, path: &str) -> Result<()> {
+        let worm = self
+            .worm
+            .lock()
+            .map_err(|_| Error::Internal("worm mutex poisoned".into()))?;
+        if let Some(policy) = worm.get(path) {
+            if policy.legal_hold {
+                return Err(Error::PermissionDenied(
+                    "write blocked: WORM legal hold active".into(),
+                ));
+            }
+            match policy.retain_until_ms {
+                None => {
+                    return Err(Error::PermissionDenied(
+                        "write blocked: WORM indefinite retention hold".into(),
+                    ));
+                }
+                Some(until_ms) => {
+                    let now_ms = now_millis();
+                    // Compare as u64: now_millis() returns i64 but is always positive.
+                    let now_ms_u64 = now_ms.max(0) as u64;
+                    if now_ms_u64 < until_ms {
+                        return Err(Error::PermissionDenied(format!(
+                            "write blocked: WORM retention active until {until_ms}ms"
+                        )));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -307,6 +384,9 @@ impl Fs {
         if name.is_empty() {
             return Err(Error::BadPath(format!("cannot write root: {path}")));
         }
+
+        // WORM retention check: block writes to immutable paths.
+        self.check_worm_write(&path)?;
 
         // quota / rate-limit hook
         if let Some(hook) = &self.write_hook {

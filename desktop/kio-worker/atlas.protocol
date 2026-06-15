@@ -1,0 +1,13 @@
+[Protocol]
+exec=kioatlas
+protocol=atlas
+input=none
+output=filesystem
+reading=true
+writing=true
+makedir=true
+deleting=true
+linking=false
+moving=false
+listing=true
+Icon=folder-remote

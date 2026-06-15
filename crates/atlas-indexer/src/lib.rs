@@ -20,6 +20,7 @@
 //! - Re-index: `reindex_model_version` marks documents stale (T3.7)
 //! - HNSW upgrade and DiskANN integration are Phase 4.
 
+pub mod hnsw;
 pub mod text_index;
 pub mod vector_store;
 

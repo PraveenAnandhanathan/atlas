@@ -293,6 +293,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "atlas-core",
+ "atlas-fs",
  "atlas-governor",
  "serde",
  "serde_json",
