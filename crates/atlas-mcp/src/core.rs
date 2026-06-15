@@ -22,6 +22,7 @@ use atlas_governor::{
 };
 use atlas_indexer::{AtlasIndex, HybridQuery};
 use atlas_lineage::{EdgeKind, LineageEdge, LineageJournal};
+use atlas_quota::Enforcer;
 use atlas_version::{Change, Version};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -85,6 +86,7 @@ pub struct CapabilityCore {
     pub audit: Option<Arc<Mutex<AuditLog>>>,
     pub tokens: Option<Arc<TokenAuthority>>,
     pub redactor: Option<Arc<RedactEngine>>,
+    pub quota: Option<Arc<Enforcer>>,
     /// Subtree limit (T5.2). When set, paths outside this prefix are rejected.
     pub subtree: Option<String>,
 }
@@ -102,6 +104,7 @@ impl CapabilityCore {
             audit: None,
             tokens: None,
             redactor: None,
+            quota: None,
             subtree: None,
         }
     }
@@ -127,6 +130,10 @@ impl CapabilityCore {
     }
     pub fn with_redactor(mut self, r: Arc<RedactEngine>) -> Self {
         self.redactor = Some(r);
+        self
+    }
+    pub fn with_quota(mut self, e: Arc<Enforcer>) -> Self {
+        self.quota = Some(e);
         self
     }
     /// Limit every dispatch to paths starting with `prefix`. Used by
@@ -185,6 +192,21 @@ impl CapabilityCore {
                 );
                 Err(ApiError::forbidden(reason))
             }
+        }
+    }
+
+    /// Check tenant quota before any write operation.
+    /// Uses `principal` as the tenant identifier.
+    fn check_quota(&self, principal: &str, bytes: u64) -> Result<(), ApiError> {
+        let Some(enforcer) = &self.quota else { return Ok(()) };
+        use atlas_quota::enforcer::Decision as QDecision;
+        match enforcer.check_write(principal, bytes) {
+            QDecision::Allow => Ok(()),
+            QDecision::Throttle { reason } => {
+                tracing::warn!(principal, %reason, "quota throttle on write");
+                Ok(()) // throttle is advisory at this layer; rate-limiting is a transport concern
+            }
+            QDecision::Deny { reason } => Err(ApiError::forbidden(format!("quota: {reason}"))),
         }
     }
 
@@ -334,6 +356,7 @@ impl CapabilityCore {
                 let content = req_str(args, "content")?;
                 self.check_scope(&path)?;
                 self.check_policy(principal, &path, Permission::Write)?;
+                self.check_quota(principal, content.len() as u64)?;
                 let e = self
                     .fs
                     .write(&path, content.as_bytes())
@@ -345,6 +368,7 @@ impl CapabilityCore {
                 let content = req_str(args, "content")?;
                 self.check_scope(&path)?;
                 self.check_policy(principal, &path, Permission::Write)?;
+                self.check_quota(principal, content.len() as u64)?;
                 // P8: propagate read errors instead of silently starting from empty.
                 // unwrap_or_default() would truncate the file on any read failure.
                 let mut existing = match self.fs.read(&path) {

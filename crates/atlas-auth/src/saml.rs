@@ -108,12 +108,16 @@ pub fn parse_response(
             sp = %config.sp_entity_id,
             "idp_cert_pem is empty — SAML assertion signature verification is DISABLED"
         );
-    } else if parsed.signed_info_canonical.is_some() {
-        verify_rsa_sha256(
-            config,
-            parsed.signed_info_canonical.as_deref().unwrap(),
-            &parsed.signature_value,
-        )?;
+    } else {
+        // Cert is configured: a missing Signature element is an attack, not
+        // an oversight.  Reject unsigned assertions unconditionally.
+        match parsed.signed_info_canonical {
+            None => return Err(SamlError::InvalidSignature(
+                "assertion contains no Signature element; \
+                 refusing unsigned assertion when IdP cert is configured".into(),
+            )),
+            Some(ref canonical) => verify_rsa_sha256(config, canonical, &parsed.signature_value)?,
+        }
     }
 
     // 4. Timestamp validation.
@@ -677,5 +681,37 @@ mod tests {
             matches!(&err, SamlError::InvalidSignature(msg) if msg.contains("RSA OID")),
             "expected InvalidSignature with 'RSA OID' message, got {err:?}"
         );
+    }
+
+    /// Regression test for the signature-stripping bypass: when an IdP cert
+    /// is configured, an assertion with no <ds:Signature> must be rejected.
+    #[test]
+    fn unsigned_assertion_rejected_when_cert_configured() {
+        use base64::Engine as _;
+        // The sample XML has no <ds:Signature> element.
+        let xml = sample_saml_xml();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(xml.as_bytes());
+        let mut c = cfg();
+        // Use a syntactically valid PEM placeholder so idp_cert_pem is non-empty.
+        // The signature check must fail before we even try to decode the cert.
+        c.idp_cert_pem = "-----BEGIN CERTIFICATE-----\naGVsbG8=\n-----END CERTIFICATE-----".into();
+        let err = parse_response(&c, &b64).unwrap_err();
+        assert!(
+            matches!(&err, SamlError::InvalidSignature(msg) if msg.contains("no Signature element")),
+            "expected rejection of unsigned assertion, got {err:?}"
+        );
+    }
+
+    /// When no cert is configured (dev/test mode), unsigned assertions should
+    /// still be accepted (the operator gets a warning log).
+    #[test]
+    fn unsigned_assertion_accepted_without_cert() {
+        use base64::Engine as _;
+        let xml = sample_saml_xml();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(xml.as_bytes());
+        let c = cfg(); // idp_cert_pem = ""
+        // Should succeed — cert-less mode is explicitly allowed (with warning).
+        let result = parse_response(&c, &b64);
+        assert!(result.is_ok(), "unsigned assertion should be accepted when no cert is configured");
     }
 }

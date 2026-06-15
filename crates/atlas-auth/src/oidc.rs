@@ -250,6 +250,19 @@ fn verify_jwt(
     let header: Header = jsonwebtoken::decode_header(token)
         .map_err(|e| OidcError::Validation(format!("header decode: {e}")))?;
 
+    // Reject non-RSA algorithms before going further.  An attacker could
+    // craft a JWT header with alg=HS256 (symmetric) or alg=none; we only
+    // accept the RS* family against an RSA public key.
+    if !matches!(
+        header.alg,
+        Algorithm::RS256 | Algorithm::RS384 | Algorithm::RS512
+    ) {
+        return Err(OidcError::Validation(format!(
+            "JWT algorithm {:?} is not permitted; only RS256/RS384/RS512 are accepted",
+            header.alg
+        )));
+    }
+
     // Find matching key from JWKS.
     if config.require_kid && header.kid.is_none() {
         return Err(OidcError::Validation(
@@ -380,5 +393,43 @@ mod tests {
             aud: cfg.client_id.clone(),
         };
         assert_eq!(claims.atlas_principal(&cfg), "user@example.com");
+    }
+
+    /// Algorithm-confusion guard: verify_jwt must reject JWTs whose header
+    /// carries a non-RSA algorithm (e.g. HS256).  This prevents alg-confusion
+    /// and alg-none attacks where an attacker can bypass signature verification.
+    #[test]
+    fn non_rsa_algorithm_rejected() {
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+
+        // Build a JWT signed with HMAC-SHA256 (symmetric).
+        let token = encode(
+            &Header::new(Algorithm::HS256),
+            &serde_json::json!({
+                "sub": "attacker",
+                "iss": "https://idp.example.com",
+                "aud": "client-id",
+                "exp": 9_999_999_999u64,
+            }),
+            &EncodingKey::from_secret(b"supersecretkey"),
+        )
+        .expect("encode should succeed");
+
+        let jwks = JwksResponse {
+            keys: vec![JwkKey {
+                key_type: "RSA".into(),
+                key_id: None,
+                key_use: Some("sig".into()),
+                alg: None,
+                n: Some("sIw8lDGilSyVpSRl2RZCfOzXymGHEpUA".into()),
+                e: Some("AQAB".into()),
+            }],
+        };
+
+        let result = verify_jwt(&token, &jwks, &cfg());
+        assert!(
+            matches!(result, Err(OidcError::Validation(ref msg)) if msg.contains("not permitted")),
+            "expected rejection of HS256 token, got {result:?}"
+        );
     }
 }
