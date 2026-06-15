@@ -30,7 +30,7 @@ use formats::extract_text;
 use std::collections::HashMap;
 use std::path::Path;
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info};
 
 #[derive(Debug, Error)]
 pub enum IngestError {
@@ -54,12 +54,30 @@ pub struct Ingester {
 
 impl Ingester {
     /// Open an ingester backed by `index_dir`.
+    ///
     /// `embedder_url` is optional; pass `None` for text-only indexing.
+    /// When a URL is provided this performs a health-check and returns an
+    /// error immediately if the embedder service is unreachable — preventing
+    /// silent bulk ingest with empty vectors that makes vector search useless.
     pub fn open(index_dir: impl AsRef<Path>, embedder_url: Option<&str>) -> Result<Self> {
-        Ok(Self {
-            index: AtlasIndex::open(index_dir)?,
-            embedder: embedder_url.map(EmbedderClient::new),
-        })
+        let embedder = match embedder_url {
+            None => None,
+            Some(url) => {
+                let client = EmbedderClient::new(url);
+                let healthy = client.health().map_err(|e| IngestError::Embedder(
+                    format!("embedder service at {url} is unreachable: {e}; \
+                             start the service or pass embedder_url=None for text-only indexing")
+                ))?;
+                if !healthy {
+                    return Err(IngestError::Embedder(format!(
+                        "embedder at {url} returned an unhealthy status; \
+                         fix the service or pass embedder_url=None for text-only indexing"
+                    )));
+                }
+                Some(client)
+            }
+        };
+        Ok(Self { index: AtlasIndex::open(index_dir)?, embedder })
     }
 
     /// Ingest a single file from the ATLAS store. Idempotent.
@@ -103,7 +121,11 @@ impl Ingester {
             Some(client) => match client.embed(&text) {
                 Ok(resp) => (resp.embedding, resp.model_version),
                 Err(e) => {
-                    warn!(path, error = %e, "embedder unavailable, storing text-only");
+                    // Log at error (not warn): this file will be indexed
+                    // without a vector, making it invisible to semantic search.
+                    error!(path, error = %e,
+                        "embedder call failed mid-ingest; document stored text-only \
+                         and will NOT appear in vector search results");
                     (vec![], String::new())
                 }
             },

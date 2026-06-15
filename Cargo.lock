@@ -523,6 +523,7 @@ dependencies = [
  "atlas-indexer",
  "atlas-lineage",
  "atlas-object",
+ "atlas-quota",
  "atlas-version",
  "hex",
  "serde",

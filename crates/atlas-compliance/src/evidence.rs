@@ -50,29 +50,53 @@ impl Evidence {
 }
 
 /// Collect automated evidence from the ATLAS system.
-/// Returns one evidence record per control that has automatic collection.
+///
+/// Each record with a file `path` is probed on disk.  The status is
+/// `Collected` only when the file actually exists; otherwise `Missing`.
+/// Records with no path (manual/test evidence) remain `Collected`.
 pub fn collect_automated(store_path: &str) -> Vec<Evidence> {
     let ts = now_secs();
-    vec![
-        Evidence { control_id: "CC6.1".into(), kind: EvidenceKind::AuditLog,
-            description: "Capability-token validation log export".into(),
-            path: Some(format!("{store_path}/audit/access.log")), status: EvidenceStatus::Collected, collected_at: ts },
-        Evidence { control_id: "CC6.3".into(), kind: EvidenceKind::ConfigSnapshot,
-            description: "Atlas governor policy snapshot".into(),
-            path: Some(format!("{store_path}/config/policy.json")), status: EvidenceStatus::Collected, collected_at: ts },
-        Evidence { control_id: "A1.3".into(), kind: EvidenceKind::BackupVerification,
-            description: "BLAKE3 footer verification result from last snapshot".into(),
-            path: Some(format!("{store_path}/backup/verify.json")), status: EvidenceStatus::Collected, collected_at: ts },
-        Evidence { control_id: "C1.1".into(), kind: EvidenceKind::ConfigSnapshot,
-            description: "Encryption-at-rest configuration".into(),
-            path: Some(format!("{store_path}/config/encryption.json")), status: EvidenceStatus::Collected, collected_at: ts },
-        Evidence { control_id: "A.9.2".into(), kind: EvidenceKind::TestResult,
-            description: "SCIM provisioning round-trip test results".into(),
-            path: None, status: EvidenceStatus::Collected, collected_at: ts },
-        Evidence { control_id: "A.12.3".into(), kind: EvidenceKind::BackupVerification,
-            description: "Monthly full-restore test log".into(),
-            path: Some(format!("{store_path}/backup/restore-test.log")), status: EvidenceStatus::Collected, collected_at: ts },
-    ]
+    let candidates: Vec<(_, _, _, Option<String>)> = vec![
+        ("CC6.1", EvidenceKind::AuditLog,
+         "Capability-token validation log export",
+         Some(format!("{store_path}/audit/access.log"))),
+        ("CC6.3", EvidenceKind::ConfigSnapshot,
+         "Atlas governor policy snapshot",
+         Some(format!("{store_path}/config/policy.json"))),
+        ("A1.3",  EvidenceKind::BackupVerification,
+         "BLAKE3 footer verification result from last snapshot",
+         Some(format!("{store_path}/backup/verify.json"))),
+        ("C1.1",  EvidenceKind::ConfigSnapshot,
+         "Encryption-at-rest configuration",
+         Some(format!("{store_path}/config/encryption.json"))),
+        ("A.9.2", EvidenceKind::TestResult,
+         "SCIM provisioning round-trip test results",
+         None),
+        ("A.12.3", EvidenceKind::BackupVerification,
+         "Monthly full-restore test log",
+         Some(format!("{store_path}/backup/restore-test.log"))),
+    ];
+
+    candidates.into_iter().map(|(control_id, kind, description, path)| {
+        let status = match &path {
+            Some(p) => {
+                if std::path::Path::new(p).exists() {
+                    EvidenceStatus::Collected
+                } else {
+                    EvidenceStatus::Missing
+                }
+            }
+            None => EvidenceStatus::Collected,
+        };
+        Evidence {
+            control_id: control_id.into(),
+            kind,
+            description: description.into(),
+            path,
+            status,
+            collected_at: ts,
+        }
+    }).collect()
 }
 
 fn now_secs() -> u64 {
@@ -99,5 +123,35 @@ mod tests {
         let ids: Vec<&str> = evs.iter().map(|e| e.control_id.as_str()).collect();
         assert!(ids.contains(&"CC6.1"));
         assert!(ids.contains(&"A1.3"));
+    }
+
+    /// Evidence with a path that does not exist on disk must be Missing,
+    /// not Collected.  This prevents fabricating a green compliance report.
+    #[test]
+    fn missing_file_yields_missing_status() {
+        let evs = collect_automated("/nonexistent_atlas_store_path_xyz");
+        for ev in &evs {
+            if ev.path.is_some() {
+                assert_eq!(
+                    ev.status,
+                    EvidenceStatus::Missing,
+                    "control {} has a path that doesn't exist but status is {:?}",
+                    ev.control_id,
+                    ev.status
+                );
+            }
+        }
+    }
+
+    /// A record without a path (manual/test evidence) remains Collected
+    /// regardless of file system state.
+    #[test]
+    fn no_path_evidence_stays_collected() {
+        let evs = collect_automated("/nonexistent_path");
+        let no_path: Vec<_> = evs.iter().filter(|e| e.path.is_none()).collect();
+        assert!(!no_path.is_empty());
+        for ev in no_path {
+            assert_eq!(ev.status, EvidenceStatus::Collected);
+        }
     }
 }
