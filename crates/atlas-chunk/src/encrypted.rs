@@ -30,7 +30,7 @@
 //! hex-encoded 32-byte key fetched from a KMS (AWS KMS, HashiCorp Vault, etc.)
 //! and ensure the file-based key is absent.
 
-use crate::LocalChunkStore;
+use crate::{ChunkStore, LocalChunkStore};
 use aes_gcm::{aead::Aead, Aes256Gcm, Key, KeyInit, Nonce};
 use atlas_core::{Error, Hash, Result};
 use hkdf::Hkdf;
@@ -63,18 +63,54 @@ impl EncryptedChunkStore {
         Self { inner, master_key }
     }
 
+    /// Re-encrypt every chunk in the store with `new_key`.
+    ///
+    /// Each chunk is decrypted with the current master key, then re-encrypted
+    /// with `new_key` and written back in-place.  On success the in-memory
+    /// master key is updated to `new_key`; the caller is responsible for
+    /// persisting `new_key` to the key file **after** this method returns `Ok`.
+    ///
+    /// Returns the number of chunks re-encrypted.
+    ///
+    /// # Atomicity
+    ///
+    /// Each individual chunk write is atomic at the filesystem level (write to
+    /// temp path, then rename).  If the process is interrupted mid-rotation the
+    /// store will be left in a mixed state where some chunks use the old key and
+    /// some use the new key.  Recovery requires re-running `key rotate` with
+    /// whichever key was active at the time of interruption.
+    pub fn rekey(&mut self, new_key: [u8; 32]) -> Result<usize> {
+        let hashes: Vec<Hash> = self.inner
+            .iter_hashes()
+            .collect::<Result<_>>()?;
+        let n = hashes.len();
+        tracing::info!(chunks = n, "key rotation: starting");
+        for hash in &hashes {
+            // Read raw ciphertext from the inner store.
+            let ciphertext = self.inner.get(hash)?;
+            // Decrypt with the current (old) key.
+            let (old_key_bytes, old_nonce_bytes) = derive_chunk_keymaterial(&self.master_key, hash);
+            let old_cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&old_key_bytes));
+            let plaintext = old_cipher
+                .decrypt(Nonce::from_slice(&old_nonce_bytes), ciphertext.as_ref())
+                .map_err(|e| Error::Internal(format!("rekey: decrypt {}: {e}", hash.short())))?;
+            // Re-encrypt with the new key.
+            let (new_key_bytes, new_nonce_bytes) = derive_chunk_keymaterial(&new_key, hash);
+            let new_cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&new_key_bytes));
+            let new_ciphertext = new_cipher
+                .encrypt(Nonce::from_slice(&new_nonce_bytes), plaintext.as_ref())
+                .map_err(|e| Error::Internal(format!("rekey: encrypt {}: {e}", hash.short())))?;
+            // Write back, overwriting the old ciphertext.
+            self.inner.put_raw_force(*hash, &new_ciphertext)?;
+        }
+        self.master_key = new_key;
+        tracing::info!(chunks = n, "key rotation: complete");
+        Ok(n)
+    }
+
     /// Derive a unique (key, nonce) pair for `chunk_hash` using HKDF-SHA256.
     fn derive_key_nonce(&self, chunk_hash: &Hash) -> ([u8; 32], [u8; 12]) {
-        let hk = Hkdf::<Sha256>::new(None, &self.master_key);
-        let info = chunk_hash.to_hex();
-        let mut okm = [0u8; 44]; // 32-byte key + 12-byte nonce
-        hk.expand(info.as_bytes(), &mut okm)
-            .expect("HKDF output length is valid");
-        let mut key = [0u8; 32];
-        let mut nonce = [0u8; 12];
-        key.copy_from_slice(&okm[..32]);
-        nonce.copy_from_slice(&okm[32..]);
-        (key, nonce)
+        derive_chunk_keymaterial(&self.master_key, chunk_hash)
     }
 
     fn encrypt(&self, plaintext: &[u8], hash: &Hash) -> Result<Vec<u8>> {
@@ -96,6 +132,22 @@ impl EncryptedChunkStore {
             .decrypt(nonce, ciphertext)
             .map_err(|e| Error::Internal(format!("decrypt chunk {}: {e}", hash.short())))
     }
+}
+
+/// Derive per-chunk (key, nonce) from `master_key` using HKDF-SHA256 with
+/// the chunk hash as the `info` parameter.  Producing a unique (key, nonce)
+/// pair per chunk prevents nonce reuse.
+fn derive_chunk_keymaterial(master_key: &[u8; 32], chunk_hash: &Hash) -> ([u8; 32], [u8; 12]) {
+    let hk = Hkdf::<Sha256>::new(None, master_key);
+    let info = chunk_hash.to_hex();
+    let mut okm = [0u8; 44]; // 32-byte key + 12-byte nonce
+    hk.expand(info.as_bytes(), &mut okm)
+        .expect("HKDF output length is always valid");
+    let mut key = [0u8; 32];
+    let mut nonce = [0u8; 12];
+    key.copy_from_slice(&okm[..32]);
+    nonce.copy_from_slice(&okm[32..]);
+    (key, nonce)
 }
 
 impl crate::ChunkStore for EncryptedChunkStore {
@@ -246,6 +298,36 @@ mod tests {
         let h1 = s.put(b"same").unwrap();
         let h2 = s.put(b"same").unwrap();
         assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn rekey_re_encrypts_all_chunks() {
+        let (_d, mut s) = enc_store();
+        let data1 = b"first secret payload";
+        let data2 = b"second secret payload";
+        let h1 = s.put(data1).unwrap();
+        let h2 = s.put(data2).unwrap();
+
+        let new_key = [0xDEu8; 32];
+        let count = s.rekey(new_key).unwrap();
+        assert_eq!(count, 2, "should have re-encrypted 2 chunks");
+
+        // After rekey, both chunks must still be readable.
+        assert_eq!(s.get(&h1).unwrap(), data1.to_vec());
+        assert_eq!(s.get(&h2).unwrap(), data2.to_vec());
+    }
+
+    #[test]
+    fn rekey_old_key_cannot_decrypt_after_rotation() {
+        let (dir, mut s) = enc_store();
+        let h = s.put(b"secret").unwrap();
+        let new_key = [0xBBu8; 32];
+        s.rekey(new_key).unwrap();
+
+        // Open with the OLD key ([0xAB; 32]) — must fail to decrypt.
+        let inner2 = LocalChunkStore::open(dir.path().join("chunks")).unwrap();
+        let s2 = EncryptedChunkStore::with_key(inner2, [0xABu8; 32]);
+        assert!(s2.get(&h).is_err(), "old key must not decrypt after rekey");
     }
 
     #[test]

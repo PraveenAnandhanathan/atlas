@@ -279,6 +279,31 @@ enum Cmd {
     /// Migrate data from external sources (T7.8).
     #[command(subcommand)]
     Migrate(MigrateCmd),
+
+    /// Encryption key management (rotate the at-rest encryption master key).
+    #[command(subcommand)]
+    Key(KeyCmd),
+}
+
+/// Subcommands for `atlasctl key`.
+#[derive(Subcommand, Debug)]
+enum KeyCmd {
+    /// Rotate the encryption master key, re-encrypting all chunks in-place.
+    ///
+    /// Generates a new 256-bit random key, decrypts every stored chunk with
+    /// the old key, re-encrypts it with the new key, then atomically saves the
+    /// new key to `<store>/encryption.key` (or the path given by `--output`).
+    ///
+    /// After rotation, update `ATLAS_ENCRYPTION_KEY` in your secrets manager
+    /// if you use environment-variable key injection.
+    Rotate {
+        /// Write the new key to this path instead of `<store>/encryption.key`.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Print what would be done without making any changes.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -628,6 +653,7 @@ fn main() -> Result<()> {
         Cmd::Tuning(sub) => cmd_tuning(sub),
         Cmd::Quota(sub) => cmd_quota(&store_path, sub),
         Cmd::Migrate(sub) => cmd_migrate(sub),
+        Cmd::Key(sub) => cmd_key(&store_path, sub),
     }
 }
 
@@ -1800,4 +1826,95 @@ fn cmd_web(store: &std::path::Path, bind: &str) -> Result<()> {
         anyhow::bail!("atlas-web exited with status {status}");
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// atlasctl key
+// ---------------------------------------------------------------------------
+
+fn cmd_key(store: &std::path::Path, cmd: KeyCmd) -> Result<()> {
+    match cmd {
+        KeyCmd::Rotate { output, dry_run } => cmd_key_rotate(store, output.as_deref(), dry_run),
+    }
+}
+
+fn cmd_key_rotate(store: &std::path::Path, output: Option<&std::path::Path>, dry_run: bool) -> Result<()> {
+    use atlas_chunk::EncryptedChunkStore;
+    use rand::RngCore;
+
+    let key_path = store.join("encryption.key");
+    let has_env_key = std::env::var("ATLAS_ENCRYPTION_KEY").is_ok();
+
+    if !key_path.exists() && !has_env_key {
+        anyhow::bail!(
+            "store at {} is not encrypted — no encryption.key file and \
+             ATLAS_ENCRYPTION_KEY is not set. Nothing to rotate.",
+            store.display()
+        );
+    }
+
+    // Generate a new 256-bit key.
+    let mut new_key = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut new_key);
+    let new_key_hex = hex::encode(new_key);
+
+    let dest = output.unwrap_or(&key_path);
+
+    if dry_run {
+        // Count chunks without touching them.
+        let chunks_dir = store.join("chunks");
+        let count = count_chunks_in_dir(&chunks_dir);
+        println!("Dry run — no changes written.");
+        println!("  Store:          {}", store.display());
+        println!("  Chunks to rekey: {count}");
+        println!("  New key dest:   {}", dest.display());
+        return Ok(());
+    }
+
+    println!("Re-encrypting chunks in {} ...", store.display());
+    let mut enc_store = EncryptedChunkStore::open(store)
+        .with_context(|| format!("open encrypted store at {}", store.display()))?;
+
+    let count = enc_store.rekey(new_key)
+        .with_context(|| "key rotation failed mid-way; see logs for the last successful chunk")?;
+
+    // Atomically write the new key.
+    let tmp = dest.with_extension("key.tmp");
+    std::fs::write(&tmp, &new_key_hex)
+        .with_context(|| format!("write new key to {}", tmp.display()))?;
+    std::fs::rename(&tmp, dest)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;
+
+    println!("Key rotation complete.");
+    println!("  Chunks re-encrypted: {count}");
+    println!("  New key file:        {}", dest.display());
+    println!("  New key (hex):       {new_key_hex}");
+    if has_env_key {
+        println!();
+        println!("  ACTION REQUIRED: update ATLAS_ENCRYPTION_KEY in your secrets manager");
+        println!("  to the hex value shown above before restarting the server.");
+    }
+    Ok(())
+}
+
+/// Count chunk files under `dir` (two-level sharded layout).
+fn count_chunks_in_dir(dir: &std::path::Path) -> usize {
+    let Ok(top) = std::fs::read_dir(dir) else { return 0 };
+    top.flatten()
+        .filter(|e| e.file_type().map_or(false, |t| t.is_dir()))
+        .flat_map(|shard1| {
+            std::fs::read_dir(shard1.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.file_type().map_or(false, |t| t.is_dir()))
+                .flat_map(|shard2| {
+                    std::fs::read_dir(shard2.path())
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .filter(|e| e.file_type().map_or(false, |t| t.is_file()))
+                })
+        })
+        .count()
 }

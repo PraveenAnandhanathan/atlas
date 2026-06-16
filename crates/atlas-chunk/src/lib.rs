@@ -166,12 +166,23 @@ impl ChunkStore for LocalChunkStore {
 
 impl LocalChunkStore {
     /// Store arbitrary `bytes` under a pre-computed `hash` without re-hashing.
-    /// Used by `EncryptedChunkStore` to persist ciphertext under the plaintext hash.
+    /// Skips the write when the file already exists (idempotent).
     pub(crate) fn put_raw(&self, hash: Hash, bytes: &[u8]) -> Result<()> {
         let path = self.path_for(&hash);
         if path.exists() {
             return Ok(());
         }
+        self.write_raw(&path, bytes)
+    }
+
+    /// Like `put_raw` but always overwrites the file on disk.
+    /// Used by `EncryptedChunkStore::rekey` to replace ciphertext in-place.
+    pub(crate) fn put_raw_force(&self, hash: Hash, bytes: &[u8]) -> Result<()> {
+        let path = self.path_for(&hash);
+        self.write_raw(&path, bytes)
+    }
+
+    fn write_raw(&self, path: &std::path::Path, bytes: &[u8]) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -181,7 +192,7 @@ impl LocalChunkStore {
             f.write_all(bytes)?;
             f.sync_all()?;
         }
-        fs::rename(&tmp, &path)?;
+        fs::rename(&tmp, path)?;
         Ok(())
     }
 }

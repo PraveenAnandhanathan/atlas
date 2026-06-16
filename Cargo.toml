@@ -137,6 +137,11 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 aes-gcm = "0.10"
 hkdf = "0.12"
 
+# Phase 9 — TLS transport
+tokio-rustls = "0.26"
+rustls = { version = "0.23", features = ["ring"] }
+webpki-roots = "0.26"
+
 # Internal crates, referenced by siblings
 atlas-core = { path = "crates/atlas-core", version = "0.1.0" }
 atlas-chunk = { path = "crates/atlas-chunk", version = "0.1.0" }
