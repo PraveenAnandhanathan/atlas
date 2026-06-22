@@ -951,7 +951,30 @@ impl CapabilityCore {
                     "deny" => Effect::Deny,
                     _ => Effect::Allow,
                 };
-                let policy_file = req_str(args, "policy_file")?;
+                let policy_file_raw = req_str(args, "policy_file")?;
+                // Reject path traversal: resolve to an absolute path and
+                // verify it stays within the store directory.
+                let store_root = self.fs.store_path();
+                let policy_path = std::path::Path::new(&policy_file_raw);
+                let abs_path = if policy_path.is_absolute() {
+                    policy_path.to_path_buf()
+                } else {
+                    store_root.join(policy_path)
+                };
+                // Lexical normalisation — resolve ".." components without syscalls.
+                let mut normalized = std::path::PathBuf::new();
+                for component in abs_path.components() {
+                    match component {
+                        std::path::Component::ParentDir => { normalized.pop(); }
+                        c => normalized.push(c),
+                    }
+                }
+                if !normalized.starts_with(store_root) {
+                    return Err(ApiError::forbidden(
+                        "policy_file must be within the store directory",
+                    ));
+                }
+                let policy_file = normalized.to_string_lossy().into_owned();
                 let rule = Rule {
                     path_pattern: pattern.clone(),
                     principals,
@@ -998,6 +1021,12 @@ impl CapabilityCore {
                     .get("legal_hold")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                // Indefinite retention and legal holds are irreversible and require
+                // elevated (admin) privilege to prevent accidental or malicious
+                // permanent data lockout.
+                if legal_hold || retain_until_ms.is_none() {
+                    self.check_policy(principal, &path, Permission::Admin)?;
+                }
                 let policy = WormPolicy {
                     retain_until_ms,
                     legal_hold,

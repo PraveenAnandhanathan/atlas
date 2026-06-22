@@ -28,6 +28,9 @@ pub enum Permission {
     Write,
     Delete,
     List,
+    /// Elevated administrative permission required for irreversible operations
+    /// such as setting indefinite WORM retention or legal holds.
+    Admin,
 }
 
 impl std::fmt::Display for Permission {
@@ -37,6 +40,7 @@ impl std::fmt::Display for Permission {
             Self::Write => "write",
             Self::Delete => "delete",
             Self::List => "list",
+            Self::Admin => "admin",
         };
         write!(f, "{s}")
     }
@@ -50,6 +54,7 @@ impl std::str::FromStr for Permission {
             "write" => Ok(Self::Write),
             "delete" => Ok(Self::Delete),
             "list" => Ok(Self::List),
+            "admin" => Ok(Self::Admin),
             _ => Err(format!("unknown permission: {s:?}")),
         }
     }
