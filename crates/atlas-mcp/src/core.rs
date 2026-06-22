@@ -334,7 +334,8 @@ impl CapabilityCore {
                 let end = if length < 0 {
                     bytes.len()
                 } else {
-                    (offset + length as usize).min(bytes.len())
+                    // saturating_add prevents wrapping on pathological inputs.
+                    offset.saturating_add(length as usize).min(bytes.len())
                 };
                 // end is always >= offset because both are clamped to bytes.len()
                 let slice = &bytes[offset..end];
@@ -372,11 +373,18 @@ impl CapabilityCore {
                         if bytes.len() < 8 {
                             return Err(ApiError::invalid("file too small for safetensors"));
                         }
-                        let meta_len = u64::from_le_bytes(
+                        const MAX_SAFETENSORS_META: usize = 64 * 1024 * 1024; // 64 MiB
+                        let meta_len_u64 = u64::from_le_bytes(
                             bytes[..8]
                                 .try_into()
                                 .map_err(|_| ApiError::invalid("safetensors header read error"))?,
-                        ) as usize;
+                        );
+                        if meta_len_u64 > MAX_SAFETENSORS_META as u64 {
+                            return Err(ApiError::invalid(format!(
+                                "safetensors metadata too large: {meta_len_u64} bytes (max {MAX_SAFETENSORS_META})"
+                            )));
+                        }
+                        let meta_len = meta_len_u64 as usize;
                         if 8 + meta_len > bytes.len() {
                             return Err(ApiError::invalid("safetensors metadata length overflows file"));
                         }
