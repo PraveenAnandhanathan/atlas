@@ -87,6 +87,21 @@ jobs:
       - name: run live FDB integration test
         run: cargo test -p atlas-meta-fdb --features fdb -- --nocapture
 
+  rdma-transport:
+    name: rdma transport (handshake)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: install libibverbs (FFI link target)
+        run: sudo apt-get update && sudo apt-get install -y libibverbs-dev librdmacm-dev
+      - name: build + run hardware-independent RDMA tests (QpParams handshake)
+        # The verbs data path needs an InfiniBand/RoCE NIC (or a Soft-RoCE
+        # rdma_rxe device, which requires kernel-module loading unavailable on
+        # hosted runners) and is covered by a separate self-hosted lab job.
+        run: cargo test -p atlas-transport --features rdma -- --nocapture
+
   pjdfstest:
     name: pjdfstest (placeholder)
     runs-on: ubuntu-latest
