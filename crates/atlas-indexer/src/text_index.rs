@@ -10,7 +10,7 @@ use tantivy::schema::{Field, Schema, TextFieldIndexing, TextOptions, FAST, STORE
 use tantivy::{Index, IndexWriter, ReloadPolicy, TantivyDocument};
 
 /// Extract the first string value of a stored field.
-fn str_field<'a>(doc: &'a TantivyDocument, field: Field) -> Option<&'a str> {
+fn str_field(doc: &TantivyDocument, field: Field) -> Option<&str> {
     doc.get_first(field).and_then(|v| {
         if let tantivy::schema::OwnedValue::Str(s) = v {
             Some(s.as_str())

@@ -15,6 +15,7 @@
 
 use crate::session::AuthSession;
 use std::path::Path;
+use tracing;
 
 /// Durable session store backed by an embedded sled database.
 ///
@@ -47,7 +48,9 @@ impl SledSessionStore {
         let bytes = self.db.get(token.as_bytes()).ok()??;
         let session: AuthSession = serde_json::from_slice(&bytes).ok()?;
         if session.is_expired() {
-            let _ = self.db.remove(token.as_bytes());
+            if let Err(e) = self.db.remove(token.as_bytes()) {
+                tracing::warn!(error = %e, "session_sled: failed to remove expired session");
+            }
             return None;
         }
         Some(session)

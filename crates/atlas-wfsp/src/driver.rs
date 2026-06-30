@@ -850,7 +850,7 @@ impl Drop for WfspMount {
 /// Accepts drive letters (`Z:`) and absolute paths.
 pub fn validate_mount_point(mp: &str) -> Result<(), WfspError> {
     let is_drive = mp.len() == 2
-        && mp.chars().next().map_or(false, |c| c.is_ascii_alphabetic())
+        && mp.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
         && mp.ends_with(':');
     let is_abs = mp.starts_with('\\') || mp.starts_with('/');
     if !is_drive && !is_abs {

@@ -392,10 +392,8 @@ impl Fs {
             return Err(Error::BadPath(format!("cannot write root: {path}")));
         }
 
-        // WORM retention check: block writes to immutable paths.
-        self.check_worm_write(&path)?;
-
-        // quota / rate-limit hook
+        // quota / rate-limit hook runs outside the gate to avoid holding the
+        // lock during network/IO calls (intentional design — see P0-2 note).
         if let Some(hook) = &self.write_hook {
             hook.before_write(&path, bytes.len() as u64)?;
         }
@@ -405,6 +403,10 @@ impl Fs {
             warn!("write_gate mutex is poisoned");
             Error::Internal("write-gate mutex poisoned".into())
         })?;
+
+        // WORM retention check inside the gate to eliminate the TOCTOU race
+        // between the check and the mutation (P7-2: WORM compliance).
+        self.check_worm_write(&path)?;
 
         let blob_hash = self.write_blob(bytes)?;
 
@@ -450,13 +452,14 @@ impl Fs {
         if path == "/" {
             return Err(Error::Invalid("cannot delete root".into()));
         }
-        // WORM check: deleting an immutable path circumvents retention.
-        self.check_worm_write(&path)?;
         let (parent, name) = parent_and_name(&path)?;
         let _gate = self.write_gate.lock().map_err(|_| {
             warn!("write_gate mutex is poisoned");
             Error::Internal("write-gate mutex poisoned".into())
         })?;
+        // WORM check inside gate: deleting an immutable path circumvents
+        // retention. Checked inside the write gate to eliminate TOCTOU (P7-2).
+        self.check_worm_write(&path)?;
 
         let (target_hash, target_kind) = self.resolve(&path)?;
         if target_kind == ObjectKind::Dir {
@@ -496,13 +499,13 @@ impl Fs {
         if from == to {
             return Ok(());
         }
-        // WORM check: renaming away from a WORM path circumvents retention
-        // (the bytes would become addressable under a non-WORM path).
-        self.check_worm_write(&from)?;
         let _gate = self.write_gate.lock().map_err(|_| {
             warn!("write_gate mutex is poisoned");
             Error::Internal("write-gate mutex poisoned".into())
         })?;
+        // WORM check inside gate: renaming away from a WORM path circumvents
+        // retention. Checked inside the write gate to eliminate TOCTOU (P7-2).
+        self.check_worm_write(&from)?;
         let (from_parent, from_name) = parent_and_name(&from)?;
         let (to_parent, to_name) = parent_and_name(&to)?;
 
@@ -558,6 +561,9 @@ impl Fs {
         }
         let _gate = self.write_gate.lock()
             .map_err(|_| Error::Internal("write-gate mutex poisoned".into()))?;
+        // WORM check: creating a directory under a WORM-protected path
+        // is treated as a mutation and blocked during the retention period.
+        self.check_worm_write(&path)?;
         if let Ok((_h, k)) = self.resolve(&path) {
             if k == ObjectKind::Dir {
                 return Ok(());

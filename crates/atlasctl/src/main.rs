@@ -1492,7 +1492,7 @@ fn cmd_explorer() -> Result<()> {
         .and_then(|p| p.parent())
         .map(|dir| dir.join("atlas-explorer"));
 
-    let binary = if sibling.as_ref().map_or(false, |p| p.exists()) {
+    let binary = if sibling.as_ref().is_some_and(|p| p.exists()) {
         sibling.unwrap()
     } else {
         std::path::PathBuf::from("atlas-explorer")
@@ -1811,7 +1811,7 @@ fn cmd_web(store: &std::path::Path, bind: &str) -> Result<()> {
         .and_then(|p| p.parent())
         .map(|dir| dir.join("atlas-web"));
 
-    let binary = if sibling.as_ref().map_or(false, |p| p.exists()) {
+    let binary = if sibling.as_ref().is_some_and(|p| p.exists()) {
         sibling.unwrap()
     } else {
         std::path::PathBuf::from("atlas-web")
@@ -1901,19 +1901,19 @@ fn cmd_key_rotate(store: &std::path::Path, output: Option<&std::path::Path>, dry
 fn count_chunks_in_dir(dir: &std::path::Path) -> usize {
     let Ok(top) = std::fs::read_dir(dir) else { return 0 };
     top.flatten()
-        .filter(|e| e.file_type().map_or(false, |t| t.is_dir()))
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .flat_map(|shard1| {
             std::fs::read_dir(shard1.path())
                 .into_iter()
                 .flatten()
                 .flatten()
-                .filter(|e| e.file_type().map_or(false, |t| t.is_dir()))
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
                 .flat_map(|shard2| {
                     std::fs::read_dir(shard2.path())
                         .into_iter()
                         .flatten()
                         .flatten()
-                        .filter(|e| e.file_type().map_or(false, |t| t.is_file()))
+                        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
                 })
         })
         .count()

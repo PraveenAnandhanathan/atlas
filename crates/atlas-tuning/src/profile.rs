@@ -97,7 +97,7 @@ impl TuningProfile {
             },
             WorkloadKind::Interactive => Self {
                 workload: kind,
-                read_ahead_bytes: 1 * 1024 * 1024,
+                read_ahead_bytes: 1024 * 1024,
                 max_concurrent_fetches: 8,
                 chunk_size_bytes: 4 * 1024 * 1024,
                 inline_verify: true,
@@ -109,7 +109,7 @@ impl TuningProfile {
                 workload: kind,
                 read_ahead_bytes: 0,
                 max_concurrent_fetches: 4,
-                chunk_size_bytes: 1 * 1024 * 1024,
+                chunk_size_bytes: 1024 * 1024,
                 inline_verify: false,
                 write_buffer_bytes: 128 * 1024 * 1024,
                 replication_priority: 2,

@@ -9,7 +9,7 @@ description = "ATLAS metadata adapter for FoundationDB (feature-gated)."
 
 [features]
 default = []
-fdb = ["dep:foundationdb"]
+fdb = ["dep:foundationdb", "dep:futures"]
 
 [dependencies]
 atlas-core = { workspace = true }
@@ -18,3 +18,4 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 foundationdb = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }

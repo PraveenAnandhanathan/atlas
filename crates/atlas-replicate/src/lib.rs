@@ -86,8 +86,10 @@ impl ReplicatedChunkStore {
         }
     }
 
-    fn tail(&self) -> &Arc<dyn ChunkStore> {
-        self.chain.last().expect("non-empty by construction")
+    fn tail(&self) -> Result<&Arc<dyn ChunkStore>> {
+        self.chain
+            .last()
+            .ok_or_else(|| Error::Internal("replicated store chain is empty".into()))
     }
 }
 
@@ -113,12 +115,12 @@ impl ChunkStore for ReplicatedChunkStore {
             }
             last_hash = Some(h);
         }
-        Ok(last_hash.unwrap())
+        last_hash.ok_or_else(|| Error::Internal("put on empty chain".into()))
     }
 
     /// Reads from the tail (CRAQ §2.2 — the tail is always clean).
     fn get(&self, hash: &Hash) -> Result<Vec<u8>> {
-        self.tail().get(hash)
+        self.tail()?.get(hash)
     }
 
     fn delete(&self, hash: &Hash) -> Result<()> {
@@ -138,7 +140,7 @@ impl ChunkStore for ReplicatedChunkStore {
     }
 
     fn has(&self, hash: &Hash) -> Result<bool> {
-        self.tail().has(hash)
+        self.tail()?.has(hash)
     }
 
     fn verify(&self, hash: &Hash) -> Result<()> {
@@ -151,11 +153,14 @@ impl ChunkStore for ReplicatedChunkStore {
     }
 
     fn size(&self, hash: &Hash) -> Result<u64> {
-        self.tail().size(hash)
+        self.tail()?.size(hash)
     }
 
     fn iter_hashes(&self) -> Box<dyn Iterator<Item = Result<Hash>> + '_> {
-        self.tail().iter_hashes()
+        match self.tail() {
+            Ok(tail) => tail.iter_hashes(),
+            Err(e) => Box::new(std::iter::once(Err(e))),
+        }
     }
 }
 

@@ -108,7 +108,7 @@ pub fn hmac_sha256(key: &[u8], msg: &[u8]) -> Vec<u8> {
     let inner_hash = inner.finalize();
     let mut outer = Sha256::new();
     outer.update(&o_pad);
-    outer.update(&inner_hash);
+    outer.update(inner_hash);
     k.iter_mut().for_each(|b| *b = 0); // wipe
     outer.finalize().to_vec()
 }

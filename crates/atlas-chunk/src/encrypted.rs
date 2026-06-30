@@ -231,10 +231,31 @@ fn generate_and_save_key(path: &Path) -> Result<[u8; 32]> {
     rand::thread_rng().fill_bytes(&mut key);
     // Atomic write so a crash mid-write never leaves a partial key.
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, hex::encode(key))?;
+    write_secret_file(&tmp, hex::encode(key).as_bytes())?;
     std::fs::rename(&tmp, path)?;
     tracing::info!(path = %path.display(), "generated new encryption master key");
     Ok(key)
+}
+
+/// Write `contents` to `path` with owner-only permissions (0o600 on Unix).
+/// Prevents the key material from being readable by group or world.
+fn write_secret_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(contents)?;
+        f.sync_all()?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    std::fs::write(path, contents)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

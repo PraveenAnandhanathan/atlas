@@ -303,7 +303,7 @@ fn verify_jwt(
         .map_err(|e| OidcError::Validation(format!("decoding key: {e}")))?;
 
     // Choose algorithm (RS256 default if not specified in JWK/header).
-    let alg = match jwk.alg.as_deref().or_else(|| {
+    let alg = match jwk.alg.as_deref().or({
         // map jsonwebtoken::Algorithm back to string
         Some(match header.alg {
             Algorithm::RS384 => "RS384",

@@ -48,7 +48,7 @@ impl BackendInfo {
     }
 }
 
-/// C-ABI entry points called from `libgvfsbackend-atlas.so`.
+// C-ABI entry points called from `libgvfsbackend-atlas.so`.
 
 /// Return a JSON-serialised `GvfsMount` for `uri`.
 ///

@@ -442,7 +442,7 @@ fn extract_thrift_strings(data: &[u8]) -> String {
         if let Ok(s) = std::str::from_utf8(candidate) {
             // Accept strings that look like identifiers or labels.
             if s.chars().all(|c| c.is_ascii_alphanumeric() || "_-. /".contains(c))
-                && s.chars().next().map_or(false, |c| c.is_alphanumeric() || c == '_')
+                && s.chars().next().is_some_and(|c| c.is_alphanumeric() || c == '_')
             {
                 out.push_str(s);
                 out.push(' ');

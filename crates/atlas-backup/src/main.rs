@@ -112,8 +112,7 @@ fn main() -> Result<()> {
 }
 
 fn parse_target(s: &str) -> Result<ReplicationTarget> {
-    if s.starts_with("s3://") {
-        let rest = &s[5..];
+    if let Some(rest) = s.strip_prefix("s3://") {
         let (bucket, prefix) = rest.split_once('/').unwrap_or((rest, ""));
         Ok(ReplicationTarget::S3 {
             endpoint: "https://s3.amazonaws.com".into(),
@@ -121,8 +120,7 @@ fn parse_target(s: &str) -> Result<ReplicationTarget> {
             prefix: prefix.into(),
             region: "us-east-1".into(),
         })
-    } else if s.starts_with("atlas://") {
-        let rest = &s[8..];
+    } else if let Some(rest) = s.strip_prefix("atlas://") {
         let (host, vol) = rest.split_once('/').unwrap_or((rest, "default"));
         Ok(ReplicationTarget::AtlasCluster {
             endpoint: host.into(),

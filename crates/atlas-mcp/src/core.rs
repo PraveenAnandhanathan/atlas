@@ -334,7 +334,8 @@ impl CapabilityCore {
                 let end = if length < 0 {
                     bytes.len()
                 } else {
-                    (offset + length as usize).min(bytes.len())
+                    // saturating_add prevents wrapping on pathological inputs.
+                    offset.saturating_add(length as usize).min(bytes.len())
                 };
                 // end is always >= offset because both are clamped to bytes.len()
                 let slice = &bytes[offset..end];
@@ -372,11 +373,18 @@ impl CapabilityCore {
                         if bytes.len() < 8 {
                             return Err(ApiError::invalid("file too small for safetensors"));
                         }
-                        let meta_len = u64::from_le_bytes(
+                        const MAX_SAFETENSORS_META: usize = 64 * 1024 * 1024; // 64 MiB
+                        let meta_len_u64 = u64::from_le_bytes(
                             bytes[..8]
                                 .try_into()
                                 .map_err(|_| ApiError::invalid("safetensors header read error"))?,
-                        ) as usize;
+                        );
+                        if meta_len_u64 > MAX_SAFETENSORS_META as u64 {
+                            return Err(ApiError::invalid(format!(
+                                "safetensors metadata too large: {meta_len_u64} bytes (max {MAX_SAFETENSORS_META})"
+                            )));
+                        }
+                        let meta_len = meta_len_u64 as usize;
                         if 8 + meta_len > bytes.len() {
                             return Err(ApiError::invalid("safetensors metadata length overflows file"));
                         }
@@ -951,7 +959,30 @@ impl CapabilityCore {
                     "deny" => Effect::Deny,
                     _ => Effect::Allow,
                 };
-                let policy_file = req_str(args, "policy_file")?;
+                let policy_file_raw = req_str(args, "policy_file")?;
+                // Reject path traversal: resolve to an absolute path and
+                // verify it stays within the store directory.
+                let store_root = self.fs.store_path();
+                let policy_path = std::path::Path::new(&policy_file_raw);
+                let abs_path = if policy_path.is_absolute() {
+                    policy_path.to_path_buf()
+                } else {
+                    store_root.join(policy_path)
+                };
+                // Lexical normalisation — resolve ".." components without syscalls.
+                let mut normalized = std::path::PathBuf::new();
+                for component in abs_path.components() {
+                    match component {
+                        std::path::Component::ParentDir => { normalized.pop(); }
+                        c => normalized.push(c),
+                    }
+                }
+                if !normalized.starts_with(store_root) {
+                    return Err(ApiError::forbidden(
+                        "policy_file must be within the store directory",
+                    ));
+                }
+                let policy_file = normalized.to_string_lossy().into_owned();
                 let rule = Rule {
                     path_pattern: pattern.clone(),
                     principals,
@@ -998,6 +1029,12 @@ impl CapabilityCore {
                     .get("legal_hold")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                // Indefinite retention and legal holds are irreversible and require
+                // elevated (admin) privilege to prevent accidental or malicious
+                // permanent data lockout.
+                if legal_hold || retain_until_ms.is_none() {
+                    self.check_policy(principal, &path, Permission::Admin)?;
+                }
                 let policy = WormPolicy {
                     retain_until_ms,
                     legal_hold,

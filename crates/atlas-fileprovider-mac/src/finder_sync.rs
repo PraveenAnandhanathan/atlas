@@ -100,12 +100,12 @@ impl FinderSyncCore {
     }
 
     /// Context-menu items for `atlas_path`.
-    pub fn menu_items_for(&self, atlas_path: &str) -> Vec<ToolbarAction> {
-        if atlas_path.ends_with('/') || atlas_path == "/" {
-            ToolbarAction::menu_items()
-        } else {
-            ToolbarAction::menu_items()
-        }
+    ///
+    /// Files and directories currently expose the same actions; the
+    /// `atlas_path` argument is retained so per-kind menus can diverge
+    /// later without an API change.
+    pub fn menu_items_for(&self, _atlas_path: &str) -> Vec<ToolbarAction> {
+        ToolbarAction::menu_items()
     }
 }
 

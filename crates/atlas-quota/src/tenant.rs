@@ -75,10 +75,8 @@ impl TenantRegistry {
             Ok(mut m) => m.remove(id).is_some(),
             Err(_) => { tracing::error!("tenants mutex poisoned — remove() had no effect"); return false; }
         };
-        if removed {
-            if let Err(_) = self.usage.lock().map(|mut m| { m.remove(id); }) {
-                tracing::error!("usage mutex poisoned — usage entry for {id} not removed");
-            }
+        if removed && self.usage.lock().map(|mut m| { m.remove(id); }).is_err() {
+            tracing::error!("usage mutex poisoned — usage entry for {id} not removed");
         }
         removed
     }
