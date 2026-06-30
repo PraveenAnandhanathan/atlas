@@ -9,7 +9,7 @@ Linux CI image. This document explains how to build and verify each one.
 | Component | Gate | Requires | Verifiable in generic Linux CI? |
 |-----------|------|----------|---------------------------------|
 | FoundationDB metadata backend | `--features fdb` (crate `atlas-meta-fdb`) | `libfdb_c` 7.3 client + a running FDB cluster | **Validated ✅** — live test in CI (`fdb-integration` job) |
-| RDMA transport | `--features rdma` (crate `atlas-transport`) | `libibverbs` + InfiniBand/RoCE NIC | Compiles ✅ / runtime needs hardware |
+| RDMA transport | `--features rdma` (crate `atlas-transport`) | `libibverbs` + InfiniBand/RoCE NIC | Handshake **validated ✅** (CI) / verbs data path needs hardware |
 | Windows Explorer shell extension | `#[cfg(windows)]` (`atlas-shellext-win`) | Windows SDK + MSVC (`comshim.cpp`) | ❌ needs Windows |
 | Windows WinFsp driver | `#[cfg(windows)]` (`atlas-wfsp`) | WinFsp runtime + MSVC | ❌ needs Windows |
 | macOS FileProvider extension | `#[cfg(target_os="macos")]` (`atlas-fileprovider-mac`) | Xcode + Swift (`swift/` package) | ❌ needs macOS |
@@ -54,19 +54,29 @@ match the client to the feature.
 
 ```bash
 sudo apt-get install -y libibverbs-dev librdmacm-dev
-cargo check -p atlas-transport --features rdma     # compiles
+cargo test -p atlas-transport --features rdma      # compiles + handshake tests
 ```
 
-The RDMA module compiles and allocates protection domains, completion queues,
-queue pairs, and memory regions. The **data path** (QP state-machine
-transitions INIT → RTR → RTS via `ibv_modify_qp`, plus the CQ-polling task that
-bridges `ibv_post_send`/`ibv_post_recv` to the async channels) is intentionally
-**not wired**: `RdmaTransport::connect` / `RdmaAcceptor::accept` return an
-explicit error directing callers to `TcpTransport`. This is deliberate — silently
-allocating hardware resources and then falling back to TCP would mislead callers
-into believing they have RDMA connectivity. Completing the data path requires an
-InfiniBand/RoCE NIC for verification (the generic CI image has no IB devices, so
-`ibv_get_device_list` returns empty). **TCP is the supported production
+**What is validated (no hardware needed):** the `QpParams` control-channel
+handshake — the big-endian wire format and the write-before-read exchange
+ordering — is unit-tested over a real TCP socket pair (`rdma::qp_params_tests`,
+run by the `rdma-transport` CI job). This is the pure-data half of RDMA
+connection setup and a common source of endianness/deadlock bugs.
+
+**What still needs hardware:** the RDMA module compiles and allocates protection
+domains, completion queues, queue pairs, and memory regions, but the **data
+path** (QP state-machine transitions INIT → RTR → RTS via `ibv_modify_qp`, plus
+the CQ-polling task that bridges `ibv_post_send`/`ibv_post_recv` to the async
+channels) is intentionally **not wired**: `RdmaTransport::connect` /
+`RdmaAcceptor::accept` return an explicit error directing callers to
+`TcpTransport`. Silently allocating hardware resources and then falling back to
+TCP would mislead callers into believing they have RDMA connectivity.
+
+Completing and validating the data path requires an InfiniBand/RoCE NIC, or a
+Soft-RoCE `rdma_rxe` software device. Note that `rdma_rxe` needs kernel-module
+loading (`modprobe rdma_rxe`), which is unavailable on hosted CI runners and
+inside containers without a `/lib/modules` tree — so this is a **self-hosted
+lab job**, not part of the hosted matrix. **TCP is the supported production
 transport today and is feature-complete.**
 
 ## Windows: shell extension + WinFsp driver

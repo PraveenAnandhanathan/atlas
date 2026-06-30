@@ -108,6 +108,18 @@ pub mod rdma {
     //! Connection management uses a TCP control channel (RDMA CM would
     //! require `librdmacm`; we keep the FFI scope minimal here and exchange
     //! QP numbers / LIDs over TCP before transitioning to RDMA data path).
+    //!
+    //! # Implementation status
+    //!
+    //! The [`QpParams`] control-channel handshake is complete and unit-tested
+    //! (no hardware needed). The verbs primitives below (device open, PD/CQ/QP
+    //! allocation, MR registration) are written but not yet reachable: the
+    //! data path (`connect`/`accept`) returns an explicit "use TCP" error
+    //! until the QP state machine (INIT → RTR → RTS) and CQ-polling loop are
+    //! wired — work that requires an InfiniBand/RoCE NIC (or a Soft-RoCE
+    //! `rdma_rxe` device) to validate. Hence the module-scoped `dead_code`
+    //! allow: these symbols are staged for that hardware-gated milestone.
+    #![allow(dead_code, unused_imports)]
 
     use super::*;
     use std::ffi::{c_int, c_uint, c_void};
@@ -115,6 +127,146 @@ pub mod rdma {
     use std::sync::Arc;
     use tokio::io::{AsyncRead, AsyncWrite};
     use tokio::net::{TcpListener, TcpStream};
+
+    // ---- QP-parameter exchange (hardware-independent) --------------------
+
+    /// The local connection parameters each peer must learn about the other
+    /// before an RC queue pair can transition INIT → RTR: the remote QP
+    /// number, the LID (InfiniBand) or GID (RoCE), and the starting packet
+    /// sequence number.
+    ///
+    /// These are exchanged over the TCP control channel *before* any verbs
+    /// data path runs. This struct is the pure-data half of RDMA connection
+    /// setup — it has no verbs or hardware dependency and is unit-tested over
+    /// a plain TCP socket pair, so the handshake's wire format and exchange
+    /// ordering are validated even where RDMA hardware is unavailable.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct QpParams {
+        /// Local queue-pair number (`ibv_qp::qp_num`).
+        pub qp_num: u32,
+        /// Local port LID (InfiniBand). Zero for pure-GID (RoCE) routing.
+        pub lid: u16,
+        /// Starting packet sequence number for this QP.
+        pub psn: u32,
+        /// Local GID (RoCE / IB global routing). Zero when LID-routed.
+        pub gid: [u8; 16],
+    }
+
+    impl QpParams {
+        /// Fixed big-endian wire encoding: qp_num(4) ‖ lid(2) ‖ psn(4) ‖ gid(16).
+        pub const WIRE_LEN: usize = 4 + 2 + 4 + 16;
+
+        /// Serialise to the fixed-width network byte order representation.
+        pub fn encode(&self) -> [u8; Self::WIRE_LEN] {
+            let mut b = [0u8; Self::WIRE_LEN];
+            b[0..4].copy_from_slice(&self.qp_num.to_be_bytes());
+            b[4..6].copy_from_slice(&self.lid.to_be_bytes());
+            b[6..10].copy_from_slice(&self.psn.to_be_bytes());
+            b[10..26].copy_from_slice(&self.gid);
+            b
+        }
+
+        /// Parse from at least [`WIRE_LEN`](Self::WIRE_LEN) bytes, or `None`
+        /// if the buffer is short.
+        pub fn decode(b: &[u8]) -> Option<Self> {
+            if b.len() < Self::WIRE_LEN {
+                return None;
+            }
+            Some(Self {
+                qp_num: u32::from_be_bytes(b[0..4].try_into().ok()?),
+                lid: u16::from_be_bytes(b[4..6].try_into().ok()?),
+                psn: u32::from_be_bytes(b[6..10].try_into().ok()?),
+                gid: b[10..26].try_into().ok()?,
+            })
+        }
+
+        /// Exchange parameters with a peer over an already-connected stream:
+        /// write ours fully, then read theirs fully. Symmetric — both sides
+        /// call this. Writing before reading avoids the deadlock that occurs
+        /// if both peers were to read first on a small socket buffer.
+        pub fn exchange<S: std::io::Write + std::io::Read>(
+            &self,
+            stream: &mut S,
+        ) -> std::io::Result<QpParams> {
+            stream.write_all(&self.encode())?;
+            stream.flush()?;
+            let mut buf = [0u8; Self::WIRE_LEN];
+            stream.read_exact(&mut buf)?;
+            QpParams::decode(&buf).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "short QpParams from peer",
+                )
+            })
+        }
+    }
+
+    #[cfg(test)]
+    mod qp_params_tests {
+        use super::QpParams;
+        use std::net::{TcpListener, TcpStream};
+
+        fn sample() -> QpParams {
+            QpParams {
+                qp_num: 0x1122_3344,
+                lid: 0xABCD,
+                psn: 0x0000_FACE,
+                gid: [
+                    0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                ],
+            }
+        }
+
+        #[test]
+        fn roundtrip() {
+            let p = sample();
+            let enc = p.encode();
+            assert_eq!(enc.len(), QpParams::WIRE_LEN);
+            assert_eq!(QpParams::decode(&enc), Some(p));
+        }
+
+        #[test]
+        fn big_endian_layout() {
+            let enc = sample().encode();
+            // qp_num is big-endian in the first four bytes.
+            assert_eq!(&enc[0..4], &[0x11, 0x22, 0x33, 0x44]);
+            // lid follows, big-endian.
+            assert_eq!(&enc[4..6], &[0xAB, 0xCD]);
+        }
+
+        #[test]
+        fn decode_rejects_short_buffer() {
+            assert_eq!(QpParams::decode(&[0u8; QpParams::WIRE_LEN - 1]), None);
+        }
+
+        #[test]
+        fn exchange_over_tcp_socket_pair() {
+            // Two peers exchange distinct params over a real TCP connection
+            // and must each receive the other's. Validates wire format AND
+            // the write-before-read ordering with no RDMA hardware.
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+
+            let server_params = sample();
+            let server = std::thread::spawn(move || {
+                let (mut sock, _) = listener.accept().unwrap();
+                server_params.exchange(&mut sock).unwrap()
+            });
+
+            let client_params = QpParams {
+                qp_num: 0x5566_7788,
+                lid: 0x0042,
+                psn: 0x0000_0001,
+                gid: [0u8; 16],
+            };
+            let mut client_sock = TcpStream::connect(addr).unwrap();
+            let got_from_server = client_params.exchange(&mut client_sock).unwrap();
+            let got_from_client = server.join().unwrap();
+
+            assert_eq!(got_from_server, server_params, "client must learn server params");
+            assert_eq!(got_from_client, client_params, "server must learn client params");
+        }
+    }
 
     // ---- libibverbs FFI types (from <infiniband/verbs.h>) ----------------
 
