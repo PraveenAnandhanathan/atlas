@@ -8,7 +8,7 @@ Linux CI image. This document explains how to build and verify each one.
 
 | Component | Gate | Requires | Verifiable in generic Linux CI? |
 |-----------|------|----------|---------------------------------|
-| FoundationDB metadata backend | `--features fdb` (crate `atlas-meta-fdb`) | `libfdb_c` 7.3 client + a running FDB cluster | Compiles ✅ / runtime needs cluster |
+| FoundationDB metadata backend | `--features fdb` (crate `atlas-meta-fdb`) | `libfdb_c` 7.3 client + a running FDB cluster | **Validated ✅** — live test in CI (`fdb-integration` job) |
 | RDMA transport | `--features rdma` (crate `atlas-transport`) | `libibverbs` + InfiniBand/RoCE NIC | Compiles ✅ / runtime needs hardware |
 | Windows Explorer shell extension | `#[cfg(windows)]` (`atlas-shellext-win`) | Windows SDK + MSVC (`comshim.cpp`) | ❌ needs Windows |
 | Windows WinFsp driver | `#[cfg(windows)]` (`atlas-wfsp`) | WinFsp runtime + MSVC | ❌ needs Windows |
@@ -23,13 +23,26 @@ curl -sSL -o fdb-clients.deb \
   https://github.com/apple/foundationdb/releases/download/7.3.27/foundationdb-clients_7.3.27-1_amd64.deb
 sudo dpkg -i fdb-clients.deb
 
-# Compile-check the Rust backend against the real client headers.
-cargo check -p atlas-meta-fdb --features fdb
+# Install the server too (auto-starts a local single/memory cluster):
+curl -sSL -o fdb-server.deb \
+  https://github.com/apple/foundationdb/releases/download/7.3.27/foundationdb-server_7.3.27-1_amd64.deb
+sudo dpkg -i fdb-server.deb
+fdbcli --exec "status minimal"          # confirm "database is available"
 
-# To run integration tests you also need a cluster (foundationdb-server
-# package, or a docker FDB). Point ATLAS at it with:
-#   FdbMetaStore::open(Some("/etc/foundationdb/fdb.cluster"), "atlas")
+# Run the live integration test (round-trips put/get/delete, scan_prefix,
+# and atomic transactions against the real cluster):
+cargo test -p atlas-meta-fdb --features fdb
 ```
+
+The live test boots the FDB network once (`unsafe { foundationdb::boot() }`),
+opens an `FdbMetaStore` in a per-PID namespace, and asserts the full `MetaStore`
+contract. This is wired into CI as the `fdb-integration` job.
+
+**Note on key layout:** `FdbMetaStore` stores keys as `<namespace>\x1f<key>`
+with the logical key appended as **raw bytes** — it does *not* tuple-encode the
+key. Tuple encoding null-terminates strings, which silently truncates prefix
+scans (an earlier version had this bug; `scan_prefix` returned nothing). The
+raw-prefix layout makes ASCII prefix scans (`ref:`, `commit:`) correct.
 
 The client API version is pinned in the workspace `Cargo.toml`
 (`foundationdb = { version = "0.9", features = ["fdb-7_3"] }`). Installing a

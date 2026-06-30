@@ -67,6 +67,26 @@ jobs:
         run: |
           python -c "import atlas; print(atlas.__version__); print(atlas.locate_atlasctl())"
 
+  fdb-integration:
+    name: foundationdb backend (live)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: install FoundationDB client + server (7.3.27, matches fdb-7_3 feature)
+        run: |
+          ver=7.3.27
+          base=https://github.com/apple/foundationdb/releases/download/$ver
+          curl -sSL -o fdb-clients.deb $base/foundationdb-clients_${ver}-1_amd64.deb
+          curl -sSL -o fdb-server.deb  $base/foundationdb-server_${ver}-1_amd64.deb
+          sudo dpkg -i fdb-clients.deb fdb-server.deb
+          # The server package auto-starts and configures a local single/memory
+          # cluster; confirm it is available before testing.
+          fdbcli --exec "status minimal"
+      - name: run live FDB integration test
+        run: cargo test -p atlas-meta-fdb --features fdb -- --nocapture
+
   pjdfstest:
     name: pjdfstest (placeholder)
     runs-on: ubuntu-latest

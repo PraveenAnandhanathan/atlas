@@ -18,28 +18,63 @@
 pub mod imp {
     use atlas_core::{Error, Result};
     use atlas_meta::{MetaStore, Transaction, TxOpExternal};
-    use foundationdb::{tuple::Subspace, Database};
+    use foundationdb::{Database, RangeOption};
+    use futures::TryStreamExt;
+
+    /// Byte that separates the namespace from the logical key. `0x1f`
+    /// (ASCII unit separator) never appears in ATLAS keys, which are
+    /// printable ASCII like `ref:/foo` or `commit:<hex>`.
+    const NS_SEP: u8 = 0x1f;
 
     pub struct FdbMetaStore {
         db: Database,
-        subspace: Subspace,
+        /// Raw key prefix: `<namespace>\x1f`. Logical keys are appended as
+        /// raw bytes (NOT tuple-encoded) so that ASCII prefix scans work —
+        /// tuple encoding null-terminates strings, which truncates ranges.
+        prefix: Vec<u8>,
     }
 
     impl FdbMetaStore {
         /// Open a FoundationDB cluster file. Pass `None` to use the
         /// default file path (`/etc/foundationdb/fdb.cluster`).
+        ///
+        /// The caller MUST have started the FDB network thread before
+        /// calling this (hold the guard from `unsafe { foundationdb::boot() }`
+        /// for the lifetime of the process). The network can only be booted
+        /// once per process, so it is the application's responsibility, not
+        /// the store's.
         pub fn open(cluster_file: Option<&str>, namespace: &str) -> Result<Self> {
             let db = Database::new(cluster_file)
                 .map_err(|e| Error::Backend(format!("fdb open: {e}")))?;
-            Ok(Self {
-                db,
-                subspace: Subspace::all().subspace(&namespace),
-            })
+            let mut prefix = namespace.as_bytes().to_vec();
+            prefix.push(NS_SEP);
+            Ok(Self { db, prefix })
         }
 
         fn key(&self, k: &str) -> Vec<u8> {
-            self.subspace.subspace(&k).bytes().to_vec()
+            let mut v = Vec::with_capacity(self.prefix.len() + k.len());
+            v.extend_from_slice(&self.prefix);
+            v.extend_from_slice(k.as_bytes());
+            v
         }
+    }
+
+    /// Smallest key strictly greater than every key beginning with `key`.
+    /// Increments the last non-`0xff` byte and drops the trailing `0xff`s —
+    /// the standard FoundationDB prefix-range terminator.
+    fn strinc(mut key: Vec<u8>) -> Vec<u8> {
+        while let Some(&last) = key.last() {
+            if last == 0xff {
+                key.pop();
+            } else {
+                let n = key.len() - 1;
+                key[n] += 1;
+                return key;
+            }
+        }
+        // All bytes were 0xff (cannot happen for our ASCII prefixes): an
+        // empty vector scans to the end of the keyspace.
+        key
     }
 
     impl MetaStore for FdbMetaStore {
@@ -77,20 +112,24 @@ pub mod imp {
         }
 
         fn scan_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>> {
-            let pk = self.key(prefix);
-            let mut end = pk.clone();
-            end.push(0xff);
+            let begin = self.key(prefix);
+            let end = strinc(begin.clone());
+            let plen = self.prefix.len();
             let res = futures::executor::block_on(async {
                 let trx = self.db.create_trx()?;
-                let opt = foundationdb::RangeOption::from((pk.as_slice(), end.as_slice()));
-                let kvs = trx.get_range(&opt, 1, false).await?;
+                let opt = RangeOption::from((begin.as_slice(), end.as_slice()));
+                // get_ranges_keyvalues streams across batches, so large
+                // scans are not silently truncated to the first 1 MB page.
+                let kvs: Vec<foundationdb::future::FdbValue> =
+                    trx.get_ranges_keyvalues(opt, false).try_collect().await?;
                 Ok::<_, foundationdb::FdbError>(
                     kvs.iter()
                         .map(|kv| {
-                            (
-                                String::from_utf8_lossy(kv.key()).into_owned(),
-                                kv.value().to_vec(),
-                            )
+                            // Strip the namespace prefix to recover the
+                            // logical key the caller stored.
+                            let logical =
+                                String::from_utf8_lossy(&kv.key()[plen..]).into_owned();
+                            (logical, kv.value().to_vec())
                         })
                         .collect(),
                 )
@@ -139,3 +178,66 @@ pub mod imp {
 }
 
 pub use imp::FdbMetaStore;
+
+// Live integration test. Requires a running FoundationDB cluster reachable
+// via the default cluster file (`/etc/foundationdb/fdb.cluster`) and the
+// `fdb` feature. Run with:
+//   cargo test -p atlas-meta-fdb --features fdb
+#[cfg(all(test, feature = "fdb"))]
+mod fdb_live_tests {
+    use super::FdbMetaStore;
+    use atlas_meta::{MetaStore, Transaction};
+
+    #[test]
+    fn metastore_roundtrip_against_live_cluster() {
+        // The FDB network thread can only be booted once per process; this
+        // single test owns it for its whole duration.
+        let _network = unsafe { foundationdb::boot() };
+
+        // Unique namespace so repeated runs never collide.
+        let ns = format!("atlas-test-{}", std::process::id());
+        let store = FdbMetaStore::open(None, &ns).expect("open fdb store");
+
+        // 1. put / get / delete raw
+        store.put_raw("k", b"v").unwrap();
+        assert_eq!(store.get_raw("k").unwrap(), Some(b"v".to_vec()));
+        store.delete("k").unwrap();
+        assert_eq!(store.get_raw("k").unwrap(), None);
+
+        // 2. scan_prefix returns LOGICAL keys, bounded strictly to the prefix
+        //    (this is what the old tuple-encoded implementation got wrong).
+        store.put_raw("ref:/a", b"1").unwrap();
+        store.put_raw("ref:/b", b"2").unwrap();
+        store.put_raw("commit:x", b"3").unwrap();
+        let mut refs = store.scan_prefix("ref:").unwrap();
+        refs.sort();
+        assert_eq!(
+            refs,
+            vec![
+                ("ref:/a".to_string(), b"1".to_vec()),
+                ("ref:/b".to_string(), b"2".to_vec()),
+            ],
+            "scan_prefix must return only the two ref: keys, with logical names"
+        );
+
+        // 3. a batch transaction applies atomically
+        let mut tx = Transaction::new();
+        tx.put_raw("t:a".into(), b"10".to_vec());
+        tx.put_raw("t:b".into(), b"20".to_vec());
+        store.apply(tx).unwrap();
+        assert_eq!(store.get_raw("t:a").unwrap(), Some(b"10".to_vec()));
+        assert_eq!(store.get_raw("t:b").unwrap(), Some(b"20".to_vec()));
+
+        // 4. a transaction with a delete op
+        let mut tx2 = Transaction::new();
+        tx2.delete("t:a".into());
+        store.apply(tx2).unwrap();
+        assert_eq!(store.get_raw("t:a").unwrap(), None);
+
+        // cleanup so the namespace does not accumulate across CI runs
+        for k in ["ref:/a", "ref:/b", "commit:x", "t:b"] {
+            store.delete(k).unwrap();
+        }
+        assert!(store.scan_prefix("").unwrap().is_empty(), "namespace not clean");
+    }
+}
