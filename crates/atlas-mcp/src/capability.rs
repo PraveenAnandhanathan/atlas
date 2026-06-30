@@ -161,12 +161,7 @@ impl Capability {
 /// (`fs_read`) too, since the OpenAI/Anthropic adapters normalise dots
 /// to underscores in tool names.
 pub fn parse_capability(name: &str) -> Option<Capability> {
-    for &c in Capability::all() {
-        if c.name() == name || c.name().replace('.', "_") == name {
-            return Some(c);
-        }
-    }
-    None
+    Capability::all().iter().find(|&&c| c.name() == name || c.name().replace('.', "_") == name).copied()
 }
 
 #[cfg(test)]

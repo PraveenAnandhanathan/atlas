@@ -103,10 +103,8 @@ pub fn run(config: &MigrationConfig, fs: &Fs) -> (Vec<TransferResult>, Migration
 fn transfer_one(config: &MigrationConfig, fs: &Fs, obj: &SourceObject) -> TransferResult {
     let atlas_path = format!("/{}/{}", config.target_volume, obj.path.trim_start_matches('/'));
 
-    if config.skip_existing {
-        if let Ok(_) = fs.stat(&atlas_path) {
-            return TransferResult::skipped(obj);
-        }
+    if config.skip_existing && fs.stat(&atlas_path).is_ok() {
+        return TransferResult::skipped(obj);
     }
 
     let bytes = match fetch_object(&config.source, obj) {

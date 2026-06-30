@@ -115,6 +115,11 @@ impl HnswIndex {
         self.nodes.len()
     }
 
+    /// True when the index contains no vectors.
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
     // -----------------------------------------------------------------------
     // LCG PRNG (no external dependencies needed).
     // -----------------------------------------------------------------------

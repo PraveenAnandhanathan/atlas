@@ -18,6 +18,11 @@
 //! into us from multiple threads, and the underlying types aren't
 //! `Send`-safe across the GIL boundary without serialization.
 
+// The PyO3 `#[pymethods]` macro generates an `.into()` on each method's
+// error return that clippy flags as `useless_conversion` (PyErr → PyErr).
+// It is macro-generated, not user code, so we allow it crate-wide.
+#![allow(clippy::useless_conversion)]
+
 use atlas_core::Author;
 use atlas_fs::Fs;
 use atlas_version::Version;
@@ -80,7 +85,7 @@ impl PyStore {
     /// Snapshot the working root and advance the current branch.
     fn commit(&self, author: &str, email: &str, message: &str) -> PyResult<String> {
         let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
-        let v = Version::new(&*fs);
+        let v = Version::new(&fs);
         let h = v
             .commit(Author::new(author, email), message)
             .map_err(into_pyerr)?;
@@ -89,26 +94,26 @@ impl PyStore {
 
     fn create_branch(&self, name: &str) -> PyResult<()> {
         let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
-        let v = Version::new(&*fs);
+        let v = Version::new(&fs);
         v.branch_create(name, None).map_err(into_pyerr)?;
         Ok(())
     }
 
     fn checkout_branch(&self, name: &str) -> PyResult<()> {
         let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
-        let v = Version::new(&*fs);
+        let v = Version::new(&fs);
         v.checkout_branch(name).map_err(into_pyerr)
     }
 
     fn head(&self) -> PyResult<String> {
         let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
-        let v = Version::new(&*fs);
+        let v = Version::new(&fs);
         Ok(v.head_commit().map_err(into_pyerr)?.to_hex())
     }
 
     fn list_branches(&self) -> PyResult<Vec<String>> {
         let fs = self.fs.lock().map_err(|_| PyIOError::new_err("store mutex poisoned"))?;
-        let v = Version::new(&*fs);
+        let v = Version::new(&fs);
         Ok(v.branch_list()
             .map_err(into_pyerr)?
             .into_iter()

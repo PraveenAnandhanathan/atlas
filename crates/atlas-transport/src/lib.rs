@@ -437,7 +437,10 @@ pub mod rdma {
         }
     }
 
-    impl super::Stream for RdmaStream {}
+    // `RdmaStream` satisfies `super::Stream` automatically through the
+    // blanket `impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T`
+    // in the parent module; no explicit impl is needed (and adding one
+    // conflicts with the blanket impl).
 
     // ---- Device context (shared) ----------------------------------------
 
@@ -560,10 +563,10 @@ pub mod rdma {
                 // The background task polls the CQ every millisecond and forwards
                 // completed receives to the read channel.
                 let (send_tx, _send_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
-                let (recv_tx, recv_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+                let (_recv_tx, recv_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
 
                 // In a full implementation, spawn a task here that calls
-                // ibv_poll_cq and forwards data through recv_tx. The remote
+                // ibv_poll_cq and forwards data through _recv_tx. The remote
                 // QP parameters (remote_qp_num, remote_lid) would be used
                 // to transition the QP through INIT → RTR → RTS states via
                 // ibv_modify_qp. We record them here for completeness.

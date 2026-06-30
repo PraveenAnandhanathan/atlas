@@ -201,7 +201,7 @@ impl ChaosRunner {
         let mut corrupted = 0usize;
         for h_result in chunks.iter_hashes() {
             let h = h_result.map_err(|e| e.to_string())?;
-            if let Err(_) = chunks.verify(&h) {
+            if chunks.verify(&h).is_err() {
                 corrupted += 1;
                 warn!(chunk = %h.short(), "chunk hash mismatch — corruption detected");
             }

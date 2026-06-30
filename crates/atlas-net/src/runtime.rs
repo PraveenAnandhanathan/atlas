@@ -246,9 +246,11 @@ impl CircuitBreaker {
     pub(crate) fn on_failure(&self) {
         let failures = self.failures.fetch_add(1, Ordering::SeqCst) + 1;
         let current = self.state.load(Ordering::SeqCst);
-        if current == CB_HALF_OPEN {
-            self.trip();
-        } else if current == CB_CLOSED && failures >= self.failure_threshold {
+        // A failure in HALF_OPEN trips immediately; in CLOSED it trips only
+        // once the failure count crosses the threshold.
+        if current == CB_HALF_OPEN
+            || (current == CB_CLOSED && failures >= self.failure_threshold)
+        {
             self.trip();
         }
     }
