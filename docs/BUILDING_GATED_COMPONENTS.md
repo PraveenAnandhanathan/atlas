@@ -13,7 +13,7 @@ Linux CI image. This document explains how to build and verify each one.
 | Windows Explorer shell extension | `#[cfg(windows)]` (`atlas-shellext-win`) | Windows SDK + MSVC (`comshim.cpp`) | ❌ needs Windows |
 | Windows WinFsp driver | `#[cfg(windows)]` (`atlas-wfsp`) | WinFsp runtime + MSVC | ❌ needs Windows |
 | macOS FileProvider extension | `#[cfg(target_os="macos")]` (`atlas-fileprovider-mac`) | Xcode + Swift (`swift/` package) | ❌ needs macOS |
-| GNOME/KDE virtual filesystem | `atlas-gvfs` C-ABI exports | GLib/GIO + KIO dev headers | Partially (Rust core ✅) |
+| GNOME/KDE virtual filesystem | `atlas-gvfs` C-ABI exports | GLib/GIO + KIO dev headers | Core + C-ABI **validated ✅** / daemon mount needs GNOME |
 
 ## FoundationDB backend (`fdb` feature)
 
@@ -105,9 +105,30 @@ cd crates/atlas-fileprovider-mac/swift && swift build -c release
 ## Linux desktop: GVFS / KIO
 
 The Rust core (`atlas-gvfs`) compiles everywhere and exposes C-ABI entry points
-consumed by a thin `libgvfsbackend-atlas.so` (GLib/GIO) and a KIO worker. Build
-those native shims against your distro's `libglib2.0-dev` / KDE `kio-dev`
-packages and register the backend under `/usr/share/gvfs/mounts/`.
+consumed by a thin `libgvfsbackend-atlas.so` (GLib/GIO) and a KIO worker.
+
+**What is validated (no desktop daemon needed):**
+
+1. `VfsCore` — the actual filesystem operations (`stat`/`list`/`read`/`write`/
+   `mkdir`/`rename`/`delete`) driven through `atlas://` URIs against a real
+   ATLAS store — is unit-tested end-to-end (`core::tests`).
+2. The **C-ABI boundary** is exercised from real C. The crate builds a
+   `cdylib` (`libatlas_gvfs.so`) and `ctest/abi_smoke.c` links it, calls
+   `atlas_gvfs_mount_info` / `atlas_gvfs_free_string`, and checks the mount
+   JSON plus null/bad-scheme rejection. Run by the `gvfs-abi` CI job:
+
+   ```bash
+   cargo build -p atlas-gvfs
+   cc crates/atlas-gvfs/ctest/abi_smoke.c -L target/debug -latlas_gvfs -o abi_smoke
+   LD_LIBRARY_PATH=target/debug ./abi_smoke      # -> "C-ABI smoke test PASSED"
+   ```
+
+**What still needs a desktop session:** the thin GLib/GIO backend and KIO
+worker that call these entry points, built against your distro's
+`libglib2.0-dev` / KDE `kio-dev` packages and registered under
+`/usr/share/gvfs/mounts/`, then mounted with `gio mount atlas://…` and browsed
+in Nautilus/Dolphin. That last mile is a desktop-session integration test, not
+a headless CI job.
 
 ## CI matrix recommendation
 

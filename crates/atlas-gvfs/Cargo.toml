@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "ATLAS Linux file-manager integrations: GVFS backend and KIO worker (T6.5)."
 
+# `rlib` keeps the crate usable as a normal workspace dependency; `cdylib`
+# produces libatlas_gvfs.so exporting the C-ABI entry points that the native
+# GVFS backend / KIO worker link against.
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 atlas-core.workspace = true
 atlas-fs.workspace = true
