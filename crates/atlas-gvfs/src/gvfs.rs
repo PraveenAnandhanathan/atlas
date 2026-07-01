@@ -108,4 +108,46 @@ mod tests {
         let info = BackendInfo::default_info();
         assert_eq!(info.scheme, "atlas");
     }
+
+    // -- C-ABI boundary (exactly what libgvfsbackend-atlas.so calls) ------
+
+    #[test]
+    fn ffi_mount_info_roundtrip_and_free() {
+        use std::ffi::{CStr, CString};
+        let uri = CString::new("atlas://mlbox/research/data").unwrap();
+        let mut out: *mut std::ffi::c_char = std::ptr::null_mut();
+        // SAFETY: valid null-terminated string and a writable out pointer.
+        let rc = unsafe { atlas_gvfs_mount_info(uri.as_ptr(), &mut out) };
+        assert_eq!(rc, 0, "mount_info should succeed");
+        assert!(!out.is_null());
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_owned();
+        assert!(json.contains("research"), "json missing volume: {json}");
+        // Must free through the paired FFI function without UB.
+        unsafe { atlas_gvfs_free_string(out) };
+    }
+
+    #[test]
+    fn ffi_rejects_null_uri() {
+        let mut out: *mut std::ffi::c_char = std::ptr::null_mut();
+        // SAFETY: passing null is exactly the case under test.
+        let rc = unsafe { atlas_gvfs_mount_info(std::ptr::null(), &mut out) };
+        assert_eq!(rc, -1);
+        assert!(out.is_null());
+    }
+
+    #[test]
+    fn ffi_rejects_bad_scheme() {
+        use std::ffi::CString;
+        let uri = CString::new("file:///etc/passwd").unwrap();
+        let mut out: *mut std::ffi::c_char = std::ptr::null_mut();
+        // SAFETY: valid string; expecting a clean -1 rejection.
+        let rc = unsafe { atlas_gvfs_mount_info(uri.as_ptr(), &mut out) };
+        assert_eq!(rc, -1);
+    }
+
+    #[test]
+    fn ffi_free_null_is_safe() {
+        // SAFETY: the function documents null as a no-op.
+        unsafe { atlas_gvfs_free_string(std::ptr::null_mut()) };
+    }
 }

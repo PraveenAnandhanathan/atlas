@@ -102,6 +102,22 @@ jobs:
         # hosted runners) and is covered by a separate self-hosted lab job.
         run: cargo test -p atlas-transport --features rdma -- --nocapture
 
+  gvfs-abi:
+    name: gvfs C-ABI smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build libatlas_gvfs.so
+        run: cargo build -p atlas-gvfs
+      - name: compile + run the C harness against the shared library
+        # Proves the C-ABI entry points that libgvfsbackend-atlas.so links
+        # against work when called from real C — no GNOME daemon required.
+        run: |
+          cc crates/atlas-gvfs/ctest/abi_smoke.c -L target/debug -latlas_gvfs -o abi_smoke
+          LD_LIBRARY_PATH=target/debug ./abi_smoke
+
   pjdfstest:
     name: pjdfstest (placeholder)
     runs-on: ubuntu-latest

@@ -133,4 +133,56 @@ mod tests {
         let uri = AtlasUri::parse(orig).unwrap();
         assert_eq!(uri.to_uri(), orig);
     }
+
+    // -- VfsCore end-to-end against a real ATLAS store --------------------
+
+    fn core() -> (tempfile::TempDir, VfsCore) {
+        let dir = tempfile::tempdir().unwrap();
+        let fs = Fs::init(dir.path()).unwrap();
+        (dir, VfsCore::new(fs, "myvol"))
+    }
+
+    fn uri(path: &str) -> AtlasUri {
+        AtlasUri::parse(&format!("atlas://host/myvol{path}")).unwrap()
+    }
+
+    #[test]
+    fn vfscore_write_read_stat() {
+        let (_d, core) = core();
+        let f = uri("/hello.txt");
+        core.write(&f, b"hi there").unwrap();
+        assert_eq!(core.read(&f).unwrap(), b"hi there");
+        assert_eq!(core.stat(&f).unwrap().size, 8);
+    }
+
+    #[test]
+    fn vfscore_list_reflects_writes() {
+        let (_d, core) = core();
+        core.write(&uri("/a.txt"), b"a").unwrap();
+        core.write(&uri("/b.txt"), b"bb").unwrap();
+        let entries = core.list(&uri("")).unwrap();
+        let names: Vec<_> = entries.iter().map(|e| e.path.clone()).collect();
+        assert!(names.iter().any(|p| p.ends_with("a.txt")), "got {names:?}");
+        assert!(names.iter().any(|p| p.ends_with("b.txt")), "got {names:?}");
+    }
+
+    #[test]
+    fn vfscore_mkdir_rename_delete() {
+        let (_d, core) = core();
+        let src = uri("/hello.txt");
+        core.write(&src, b"payload").unwrap();
+        core.mkdir(&uri("/sub")).unwrap();
+        let dst = uri("/sub/hello.txt");
+        core.rename(&src, &dst).unwrap();
+        assert!(core.read(&src).is_err(), "source should be gone after rename");
+        assert_eq!(core.read(&dst).unwrap(), b"payload");
+        core.delete(&dst).unwrap();
+        assert!(core.read(&dst).is_err(), "file should be gone after delete");
+    }
+
+    #[test]
+    fn vfscore_read_missing_is_error() {
+        let (_d, core) = core();
+        assert!(core.read(&uri("/nope.txt")).is_err());
+    }
 }
